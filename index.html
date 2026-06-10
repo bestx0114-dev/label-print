@@ -14,7 +14,7 @@
     <script src="https://unpkg.com/html5-qrcode"></script>
     
     <style>
-        /* 列印樣式設定 - 專為標籤貼紙設計 (直式標籤：如寬 50mm x 高 80mm) */
+        /* 列印樣式設定 - 專為標籤貼紙設計 (直式大標籤：100mm x 150mm) */
         @media print {
             body * {
                 visibility: hidden;
@@ -23,6 +23,7 @@
                 visibility: visible;
             }
             #print-area {
+                display: block !important; /* 修正：強制在列印時顯示，覆蓋 Tailwind 的 hidden (display: none) */
                 position: absolute;
                 left: 0;
                 top: 0;
@@ -33,7 +34,7 @@
             .no-print {
                 display: none !important;
             }
-            /* 去除瀏覽器預設頁首頁尾 */
+            /* 去除瀏覽器預設頁首頁尾，並精確設定列印邊界 */
             @page {
                 size: auto;
                 margin: 0mm;
@@ -513,7 +514,7 @@
             showNotification("任務已刪除", "info");
         }
 
-        // 執行標籤列印
+        // 執行標籤列印 (大改版：版面配合 100mm x 150mm 大標籤規格縮放與字體極致加大)
         window.printJob = async function(jobId) {
             const jobs = isOnline ? currentJobs : localPrintQueue;
             const job = jobs.find(j => j.id === jobId);
@@ -537,51 +538,54 @@
                 const label = document.createElement('div');
                 label.className = "inline-block bg-white border-4 border-black text-black text-left relative overflow-hidden p-0 m-2";
                 
-                label.style.width = "48mm";
-                label.style.height = "78mm";
+                // 調整為適合 100mm x 150mm 大貼紙的直式規格比例 (留點印表機溢出補償)
+                label.style.width = "96mm";
+                label.style.height = "146mm";
                 label.style.pageBreakAfter = "always";
                 
                 const uniqueQrId = `print-qr-${jobId}-${i}`;
                 
                 label.innerHTML = `
-                    <div class="flex flex-col h-full w-full justify-between" style="font-family: 'Microsoft JhengHei', sans-serif;">
+                    <div class="flex flex-col h-full w-full justify-between p-4" style="font-family: 'Microsoft JhengHei', sans-serif; box-sizing: border-box;">
                         
-                        <!-- 區塊1：規格二 -->
-                        <div class="flex border-b-2 border-black" style="height: 14%;">
-                            <div class="w-[22%] border-r-2 border-black flex flex-col items-center justify-center text-[10px] font-black leading-tight">
+                        <!-- 區塊1：規格二 (加高加粗，字級設大) -->
+                        <div class="flex border-b-4 border-black pb-2" style="height: 12%;">
+                            <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[18px] font-black leading-tight">
                                 <span>規</span><span>格</span><span>二</span>
                             </div>
-                            <div class="w-[78%] flex items-center justify-center font-extrabold text-[15px] px-2 font-mono tracking-widest text-center truncate">
+                            <div class="w-[80%] flex items-center justify-center font-extrabold text-[32px] px-2 font-mono tracking-widest text-center truncate">
                                 ${job.spec || '無'}
                             </div>
                         </div>
                         
-                        <!-- 區塊2：品名 -->
-                        <div class="flex border-b-2 border-black" style="height: 38%;">
-                            <div class="w-[22%] border-r-2 border-black flex flex-col items-center justify-center text-[12px] font-black leading-normal">
-                                <span>品</span><span class="mt-1">名</span>
+                        <!-- 區塊2：品名 (加高加粗，字級顯著加大為 32px-36px 滿足大標籤清晰可見度) -->
+                        <div class="flex border-b-4 border-black py-2" style="height: 38%;">
+                            <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[20px] font-black leading-normal">
+                                <span>品</span><span class="mt-2">名</span>
                             </div>
-                            <div class="w-[78%] flex items-center justify-start text-[18px] font-black px-3 py-1 leading-snug break-all overflow-hidden line-clamp-3">
+                            <div class="w-[80%] flex items-center justify-start text-[32px] font-black px-4 leading-snug break-all overflow-hidden line-clamp-3">
                                 ${job.name}
                             </div>
                         </div>
                         
-                        <!-- 區塊3：貨號 -->
-                        <div class="flex border-b-2 border-black" style="height: 24%;">
-                            <div class="w-[22%] border-r-2 border-black flex flex-col items-center justify-center text-[12px] font-black leading-tight">
-                                <span>貨</span><span class="mt-1">號</span>
+                        <!-- 區塊3：貨號 (貨號條碼文字放大至 38px) -->
+                        <div class="flex border-b-4 border-black py-2" style="height: 22%;">
+                            <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[20px] font-black leading-tight">
+                                <span>貨</span><span class="mt-2">號</span>
                             </div>
-                            <div class="w-[78%] flex items-center justify-center text-[22px] font-black px-2 font-mono tracking-tight text-center">
+                            <div class="w-[80%] flex items-center justify-center text-[38px] font-black px-2 font-mono tracking-wide text-center">
                                 ${job.sku}
                             </div>
                         </div>
                         
-                        <!-- 區塊4：QR碼 與 儲位 -->
-                        <div class="flex items-center" style="height: 24%;">
-                            <div class="w-[38%] flex items-center justify-center pl-2">
-                                <div id="${uniqueQrId}" class="w-[45px] h-[45px] flex items-center justify-center bg-white"></div>
+                        <!-- 區塊4：QR碼 與 儲位 (儲位字體加粗加大至 44px，QR Code 大小增至 90px 以契合 100x150mm) -->
+                        <div class="flex items-center pt-2" style="height: 28%;">
+                            <!-- 左下：QR Code (40%) -->
+                            <div class="w-[40%] flex items-center justify-center pl-2">
+                                <div id="${uniqueQrId}" class="w-[90px] h-[90px] flex items-center justify-center bg-white"></div>
                             </div>
-                            <div class="w-[62%] flex items-center justify-center text-[23px] font-black px-1 font-sans text-center tracking-tighter truncate">
+                            <!-- 右下：儲位 (60%) -->
+                            <div class="w-[60%] flex items-center justify-center text-[44px] font-black px-2 font-sans text-center tracking-tighter truncate">
                                 ${job.loc || '無儲位'}
                             </div>
                         </div>
@@ -590,13 +594,13 @@
                 `;
                 printArea.appendChild(label);
 
-                // 動態渲染直式標籤的 QR Code
+                // 動態渲染大尺寸直式標籤的 QR Code (寬高改為 90x90px)
                 setTimeout(() => {
                     try {
                         new QRCode(document.getElementById(uniqueQrId), {
                             text: job.sku,
-                            width: 45,
-                            height: 45,
+                            width: 90,
+                            height: 90,
                             colorDark : "#000000",
                             colorLight : "#ffffff",
                             correctLevel : QRCode.CorrectLevel.M
@@ -1043,11 +1047,12 @@
             <!-- 狀態控制板 -->
             <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div class="flex items-center gap-4">
-                    <div class="relative inline-flex items-center cursor-pointer">
+                    <!-- 修正：將外層的 <div> 更改為 <label> 標籤，讓點擊開關滑桿或文字能正確觸發 toggle 事件 -->
+                    <label class="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" id="auto-print-toggle" onchange="toggleAutoPrint()" class="sr-only peer">
                         <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
                         <span class="ml-3 text-sm font-bold text-slate-700">開啟電腦自動列印模式</span>
-                    </div>
+                    </label>
                     <span id="auto-print-status" class="text-sm font-semibold text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
                         自動列印：已關閉
                     </span>
@@ -1086,9 +1091,9 @@
             <!-- 印表機設定與教學 -->
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div class="bg-white rounded-xl border border-slate-200 p-6 space-y-3">
-                    <h4 class="font-bold text-slate-800 flex items-center gap-2"><i class="fa-solid fa-screwdriver-wrench text-amber-500"></i> 直式標籤列印設定說明</h4>
+                    <h4 class="font-bold text-slate-800 flex items-center gap-2"><i class="fa-solid fa-screwdriver-wrench text-amber-500"></i> 直式標籤列印設定說明 (100mm x 150mm)</h4>
                     <ul class="text-xs text-slate-600 space-y-2 list-disc list-inside">
-                        <li><strong>尺寸設定</strong>：在您的標籤印表機設定中，將紙張大小設定為直式尺寸（寬約 50mm x 高 80mm 的規格比例）。</li>
+                        <li><strong>尺寸設定</strong>：在您的標籤印表機設定中，將紙張大小設定為直式尺寸（100mm x 150mm）。</li>
                         <li><strong>版面邊距</strong>：請將瀏覽器列印選項中的「邊距 (Margins)」設定為 <strong class="text-indigo-600">無 (None)</strong> 以獲得最完美對齊。</li>
                         <li><strong>頁首頁尾</strong>：記得取消勾選「頁首和頁尾 (Headers and footers)」。</li>
                     </ul>
