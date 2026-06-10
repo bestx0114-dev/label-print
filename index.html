@@ -196,6 +196,12 @@
             const scannerDiv = document.getElementById('scanner-container');
             const scanBtn = document.getElementById('scan-btn');
             
+            // 【安全防錯】：確認 DOM 元素存在後才讀取 classList
+            if (!scannerDiv || !scanBtn) {
+                console.error("找不到相機掃描容器或按鈕元件。");
+                return;
+            }
+            
             if (scannerDiv.classList.contains('hidden')) {
                 scannerDiv.classList.remove('hidden');
                 scanBtn.innerHTML = '<i class="fa-solid fa-stop mr-2"></i>停止掃描';
@@ -234,10 +240,14 @@
         function stopScanner() {
             const scannerDiv = document.getElementById('scanner-container');
             const scanBtn = document.getElementById('scan-btn');
-            scannerDiv.classList.add('hidden');
-            scanBtn.innerHTML = '<i class="fa-solid fa-camera mr-2"></i>掃描條碼';
-            scanBtn.classList.replace('bg-red-600', 'bg-indigo-600');
-            scanBtn.classList.replace('hover:bg-red-700', 'hover:bg-indigo-700');
+            
+            // 【安全防錯】：確認元件存在
+            if (scannerDiv) scannerDiv.classList.add('hidden');
+            if (scanBtn) {
+                scanBtn.innerHTML = '<i class="fa-solid fa-camera mr-2"></i>掃描條碼';
+                scanBtn.classList.replace('bg-red-600', 'bg-indigo-600');
+                scanBtn.classList.replace('hover:bg-red-700', 'hover:bg-indigo-700');
+            }
 
             if (html5QrcodeScanner) {
                 html5QrcodeScanner.stop().then(() => {
@@ -592,7 +602,7 @@
             showNotification("任務已刪除", "info");
         }
 
-        // 執行標籤列印
+        // 執行標籤列印 (大改版：版面配合 100mm x 150mm 大標籤規格縮放與字體極致加大)
         window.printJob = async function(jobId) {
             const jobs = isOnline ? currentJobs : localPrintQueue;
             const job = jobs.find(j => j.id === jobId);
@@ -1119,6 +1129,11 @@
                     <hr class="w-[42%] border-slate-200">
                     <span class="text-xs text-slate-400 font-bold">或</span>
                     <hr class="w-[42%] border-slate-200">
+                </div>
+
+                <!-- 【修正】重新加入在 HTML 結構中遺失的相機掃描容器元素 -->
+                <div id="scanner-container" class="hidden mb-4 overflow-hidden rounded-lg border border-slate-200 bg-black relative">
+                    <div id="interactive-scanner" class="w-full"></div>
                 </div>
 
                 <!-- 搜尋/輸入群組 (貨號) -->
