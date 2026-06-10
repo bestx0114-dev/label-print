@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>智慧進貨標籤列印系統</title>
+    <title>百思特標籤列印系統</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- FontAwesome Icons -->
@@ -23,7 +23,7 @@
                 visibility: visible;
             }
             #print-area {
-                display: block !important; /* 修正：強制在列印時顯示，覆蓋 Tailwind 的 hidden (display: none) */
+                display: block !important; /* 強制在列印時顯示，覆蓋 Tailwind 的 hidden (display: none) */
                 position: absolute;
                 left: 0;
                 top: 0;
@@ -511,7 +511,7 @@
 
 
         // ==========================================
-        // 核心邏輯：電腦接收端 (PC Print Client)
+        // 核心邏輯：電腦接收端 (PC View)
         // ==========================================
         window.autoPrintEnabled = false;
         let currentJobs = [];
@@ -618,6 +618,7 @@
         }
 
         // 執行標籤列印 (大改版：版面配合 100mm x 150mm 大標籤規格縮放，字體極致加大，且右下角加入「列印時間」與「上架人員」)
+        // 【優化設計】：將儲位寬度比例從 60% 調升至 70% (QR Code 從 40% 縮小至 30%)，字體微調為 38px 並移除 truncate 防止儲位後半段被切掉。
         window.printJob = async function(jobId) {
             const jobs = isOnline ? currentJobs : localPrintQueue;
             const job = jobs.find(j => j.id === jobId);
@@ -688,14 +689,14 @@
                             </div>
                         </div>
                         
-                        <!-- 區塊4：QR碼 與 儲位 (儲位字體加粗加大至 44px，QR Code 大小增至 90px 以契合 100x150mm) -->
+                        <!-- 區塊4：QR碼 與 儲位 (儲位字體微調至 38px 確保完美容納，QR Code 縮小至 30%，儲位擴大至 70% 並移除 truncate 防切) -->
                         <div class="flex items-center pt-2 pb-6" style="height: 28%;">
-                            <!-- 左下：QR Code (40%) -->
-                            <div class="w-[40%] flex items-center justify-center pl-2">
+                            <!-- 左下：QR Code (30%) -->
+                            <div class="w-[30%] flex items-center justify-center pl-2">
                                 <div id="${uniqueQrId}" class="w-[90px] h-[90px] flex items-center justify-center bg-white"></div>
                             </div>
-                            <!-- 右下：儲位 (60%) -->
-                            <div class="w-[60%] flex items-center justify-center text-[44px] font-black px-2 font-sans text-center tracking-tighter truncate">
+                            <!-- 右下：儲位 (70%) -->
+                            <div class="w-[70%] flex items-center justify-center text-[38px] font-black px-2 font-sans text-center tracking-tighter whitespace-nowrap overflow-visible">
                                 ${job.loc || '無儲位'}
                             </div>
                         </div>
@@ -1231,12 +1232,12 @@
                             </div>
                         </div>
                         
-                        <!-- QR碼 與 儲位 -->
+                        <!-- QR碼 與 儲位 (調整手機預覽中的寬度比以跟列印端同步防切：QR 30%, 儲位 70%) -->
                         <div class="flex items-center" style="height: 24%;">
-                            <div class="w-[38%] flex items-center justify-center pl-1.5">
+                            <div class="w-[30%] flex items-center justify-center pl-1.5">
                                 <div id="prev-qrcode" class="w-[42px] h-[42px] flex items-center justify-center bg-white"></div>
                             </div>
-                            <div id="prev-loc" class="w-[62%] flex items-center justify-center text-[18px] font-black px-1 font-sans text-center truncate">
+                            <div id="prev-loc" class="w-[70%] flex items-center justify-center text-[16px] font-black px-1 font-sans text-center whitespace-nowrap overflow-visible">
                                 7A-12-E01
                             </div>
                         </div>
