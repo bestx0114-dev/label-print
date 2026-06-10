@@ -207,7 +207,11 @@
                 scanBtn.innerHTML = '<i class="fa-solid fa-stop mr-2"></i>停止掃描';
                 scanBtn.classList.replace('bg-indigo-600', 'bg-red-600');
                 scanBtn.classList.replace('hover:bg-indigo-700', 'hover:bg-red-700');
-                startScanner();
+                
+                // 【修復】：加入 150 毫秒延遲，等待 DOM 渲染完寬高度，避免 Html5Qrcode 初始化寬度為 0 失敗
+                setTimeout(() => {
+                    startScanner();
+                }, 150);
             } else {
                 stopScanner();
             }
@@ -301,6 +305,17 @@
                 document.getElementById('prev-sku').innerText = product.id;
                 document.getElementById('prev-spec').innerText = product.spec || '無';
                 document.getElementById('prev-loc').innerText = product.loc || '無儲位';
+
+                // 即時預覽：同步右下角小字（人員與列印時間）
+                const operatorVal = document.getElementById('print-operator').value.trim() || window.settings.defaultOperator;
+                document.getElementById('prev-operator-text').innerText = operatorVal;
+                
+                const now = new Date();
+                const nowTimeStr = now.getFullYear() + '/' + 
+                                   String(now.getMonth() + 1).padStart(2, '0') + '/' + 
+                                   String(now.getDate()).padStart(2, '0') + ' ' + 
+                                   now.toTimeString().split(' ')[0];
+                document.getElementById('prev-time-text').innerText = nowTimeStr;
 
                 // 產生預覽直式 QR Code
                 try {
@@ -602,7 +617,7 @@
             showNotification("任務已刪除", "info");
         }
 
-        // 執行標籤列印 (大改版：版面配合 100mm x 150mm 大標籤規格縮放與字體極致加大)
+        // 執行標籤列印 (大改版：版面配合 100mm x 150mm 大標籤規格縮放，字體極致加大，且右下角加入「列印時間」與「上架人員」)
         window.printJob = async function(jobId) {
             const jobs = isOnline ? currentJobs : localPrintQueue;
             const job = jobs.find(j => j.id === jobId);
@@ -621,6 +636,13 @@
             const printArea = document.getElementById('print-area');
             printArea.innerHTML = '';
 
+            // 格式化目前列印時間 (年/月/日 時:分:秒)
+            const printDate = new Date(job.timestamp);
+            const formattedTime = printDate.getFullYear() + '/' +
+                                 String(printDate.getMonth() + 1).padStart(2, '0') + '/' +
+                                 String(printDate.getDate()).padStart(2, '0') + ' ' +
+                                 printDate.toTimeString().split(' ')[0];
+
             // 根據設定張數產生多個標籤
             for (let i = 0; i < job.copies; i++) {
                 const label = document.createElement('div');
@@ -634,7 +656,7 @@
                 const uniqueQrId = `print-qr-${jobId}-${i}`;
                 
                 label.innerHTML = `
-                    <div class="flex flex-col h-full w-full justify-between p-4" style="font-family: 'Microsoft JhengHei', sans-serif; box-sizing: border-box;">
+                    <div class="flex flex-col h-full w-full justify-between p-4 relative" style="font-family: 'Microsoft JhengHei', sans-serif; box-sizing: border-box;">
                         
                         <!-- 區塊1：規格二 (加高加粗，字級設大) -->
                         <div class="flex border-b-4 border-black pb-2" style="height: 12%;">
@@ -667,7 +689,7 @@
                         </div>
                         
                         <!-- 區塊4：QR碼 與 儲位 (儲位字體加粗加大至 44px，QR Code 大小增至 90px 以契合 100x150mm) -->
-                        <div class="flex items-center pt-2" style="height: 28%;">
+                        <div class="flex items-center pt-2 pb-6" style="height: 28%;">
                             <!-- 左下：QR Code (40%) -->
                             <div class="w-[40%] flex items-center justify-center pl-2">
                                 <div id="${uniqueQrId}" class="w-[90px] h-[90px] flex items-center justify-center bg-white"></div>
@@ -676,6 +698,12 @@
                             <div class="w-[60%] flex items-center justify-center text-[44px] font-black px-2 font-sans text-center tracking-tighter truncate">
                                 ${job.loc || '無儲位'}
                             </div>
+                        </div>
+
+                        <!-- 【全新大升級】：標籤最右下角加上小字顯示「列印時間」與「上架人員」，使用絕對定位防止干擾主版面 -->
+                        <div class="absolute bottom-2 right-4 text-[11px] font-extrabold text-slate-800 text-right leading-tight tracking-tight select-none">
+                            人員: ${job.operator || '上架人員'}<br>
+                            時間: ${formattedTime}
                         </div>
 
                     </div>
@@ -1028,6 +1056,13 @@
             // 綁定表單送出
             document.getElementById('product-form').addEventListener('submit', window.saveProduct);
             
+            // 【修復與大升級】：讓手機端人員欄位輸入時，同步即刻更新即時標籤預覽中的人員姓名
+            document.getElementById('print-operator').addEventListener('input', (e) => {
+                const val = e.target.value.trim() || window.settings.defaultOperator;
+                const prevOpEl = document.getElementById('prev-operator-text');
+                if (prevOpEl) prevOpEl.innerText = val;
+            });
+
             // 初始化產品數值與面板
             updateProductCountBadge();
 
@@ -1131,9 +1166,9 @@
                     <hr class="w-[42%] border-slate-200">
                 </div>
 
-                <!-- 【修正】重新加入在 HTML 結構中遺失的相機掃描容器元素 -->
+                <!-- 【修正】重新加入在 HTML 結構中遺失的相機掃描容器元素，並設定固定高防止寬高為 0 的鏡頭啟動錯誤 -->
                 <div id="scanner-container" class="hidden mb-4 overflow-hidden rounded-lg border border-slate-200 bg-black relative">
-                    <div id="interactive-scanner" class="w-full"></div>
+                    <div id="interactive-scanner" class="w-full bg-slate-900" style="min-height: 250px;"></div>
                 </div>
 
                 <!-- 搜尋/輸入群組 (貨號) -->
@@ -1204,6 +1239,12 @@
                             <div id="prev-loc" class="w-[62%] flex items-center justify-center text-[18px] font-black px-1 font-sans text-center truncate">
                                 7A-12-E01
                             </div>
+                        </div>
+
+                        <!-- 手機端即時預覽：右下角小字資訊 (縮小美化比例) -->
+                        <div class="absolute bottom-1 right-2 text-[7px] font-bold text-slate-600 scale-[0.8] origin-bottom-right leading-tight text-right select-none">
+                            人員: <span id="prev-operator-text">上架人員</span><br>
+                            時間: <span id="prev-time-text">列印時間</span>
                         </div>
                     </div>
                 </div>
