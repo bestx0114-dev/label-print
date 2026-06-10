@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智慧進貨標籤列印系統</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- QR Code Generator (全新導入用於渲染新版直式QR碼) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- Html5-Qrcode (手機掃碼庫) -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    
+    <style>
+        /* 列印樣式設定 - 專為標籤貼紙設計 (直式標籤：如寬 50mm x 高 80mm) */
+        @media print {
+            body * {
+                visibility: hidden;
+            }
+            #print-area, #print-area * {
+                visibility: visible;
+            }
+            #print-area {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                margin: 0;
+                padding: 0;
+            }
+            .no-print {
+                display: none !important;
+            }
+            /* 去除瀏覽器預設頁首頁尾 */
+            @page {
+                size: auto;
+                margin: 0mm;
+            }
+        }
+        /* 隱藏捲軸但保持功能 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col">
+
+    <!-- Firebase 核心 SDK 與 Firestore (透過 CDN 導入) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, query, updateDoc, deleteDoc, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // 系統變數初始化 (由執行環境提供，若無則使用模擬本地模式)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'barcode-print-demo';
+        let db, auth;
+        let isOnline = false;
+
+        // 預設產品資料庫 (使用您的真實藥盒、口罩等資料作範例)
+        const defaultProducts = {
+            "319-1361": { id: "319-1361", name: "15C2-加大4格藥盒(3884)", loc: "7A-12-E01", spec: "8845" },
+            "328-002": { id: "328-002", name: "4D魚型口罩-14白", loc: "2C-05-D01", spec: "無" },
+            "319-2955": { id: "319-2955", name: "09I1-2x60捆物粘扣帶_紅(3947)", loc: "7A-01-D11", spec: "9475/6072" },
+            "PIHG002-B02": { id: "PIHG002-B02", name: "不鏽鋼束帶-粗7.9x200mm(下100發一包)", loc: "7A-01-E01", spec: "3275" }
+        };
+
+        // 本地模擬之資料庫狀態
+        let localProducts = { ...defaultProducts };
+        let localPrintQueue = [];
+        
+        // 外部整合連結儲存 (保存在 localStorage 讓使用者不需重複設定)
+        window.settings = {
+            googleLogScriptUrl: localStorage.getItem('googleLogScriptUrl') || '',
+            defaultOperator: localStorage.getItem('defaultOperator') || '上架人員'
+        };
+
+        // 初始化 Firebase
+        async function initFirebase() {
+            try {
+                if (typeof __firebase_config !== 'undefined') {
+                    const firebaseConfig = JSON.parse(__firebase_config);
+                    const app = initializeApp(firebaseConfig);
+                    auth = getAuth(app);
+                    db = getFirestore(app);
+
+                    // 匿名登入
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                    
+                    isOnline = true;
+                    showNotification("雲端資料庫已同步連線", "success");
+                    
+                    // 監聽雲端資料
+                    setupCloudListeners();
+                    
+                    // 讀取雲端全域設定 (若有)
+                    try {
+                        const settingsSnap = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'settings2'));
+                        if (settingsSnap.exists()) {
+                            const cloudSettings = settingsSnap.data();
+                            window.settings.googleLogScriptUrl = cloudSettings.googleLogScriptUrl || window.settings.googleLogScriptUrl;
+                            updateSettingsUI();
+                        }
+                    } catch(e) {
+                        console.log("未找到雲端設定檔，使用本地快取");
+                    }
+                } else {
+                    console.log("使用本地模擬模式運作中");
+                    showNotification("本地模擬模式（資料將不會跨裝置同步）", "info");
+                    renderProducts();
+                    renderQueue();
+                }
+                
+                // 自動觸發 Google Sheet 同步 (安全模式：透過同一個 Web App 的 GET 來同步產品)
+                if (window.settings.googleLogScriptUrl) {
+                    syncFromGoogleSheet();
+                }
+            } catch (error) {
+                console.error("Firebase 初始化失敗:", error);
+                showNotification("連線失敗，自動切換至本地模擬模式", "warning");
+                renderProducts();
+                renderQueue();
+            }
+        }
+
+        // ==========================================
+        // UI 狀態控制
+        // ==========================================
+        window.currentTab = 'mobile'; // 預設手機端
+        
+        window.switchTab = function(tab) {
+            window.currentTab = tab;
+            
+            // UI 按鈕切換
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('text-indigo-600', 'border-indigo-600', 'bg-indigo-50');
+                btn.classList.add('text-slate-500', 'border-transparent');
+            });
+            const activeBtn = document.getElementById(`tab-btn-${tab}`);
+            if (activeBtn) {
+                activeBtn.classList.add('text-indigo-600', 'border-indigo-600', 'bg-indigo-50');
+                activeBtn.classList.remove('text-slate-500', 'border-transparent');
+            }
+
+            // 區塊切換
+            document.getElementById('mobile-view').classList.add('hidden');
+            document.getElementById('pc-view').classList.add('hidden');
+            document.getElementById('db-view').classList.add('hidden');
+            
+            document.getElementById(`${tab}-view`).classList.remove('hidden');
+
+            // 如果關閉手機端，停止掃描器
+            if (tab !== 'mobile' && html5QrcodeScanner) {
+                stopScanner();
+            }
+        }
+
+        // ==========================================
+        // 核心邏輯：手機端 (Mobile Input)
+        // ==========================================
+        let html5QrcodeScanner = null;
+
+        window.toggleScanner = function() {
+            const scannerDiv = document.getElementById('scanner-container');
+            const scanBtn = document.getElementById('scan-btn');
+            
+            if (scannerDiv.classList.contains('hidden')) {
+                scannerDiv.classList.remove('hidden');
+                scanBtn.innerHTML = '<i class="fa-solid fa-stop mr-2"></i>停止掃描';
+                scanBtn.classList.replace('bg-indigo-600', 'bg-red-600');
+                scanBtn.classList.replace('hover:bg-indigo-700', 'hover:bg-red-700');
+                startScanner();
+            } else {
+                stopScanner();
+            }
+        }
+
+        function startScanner() {
+            html5QrcodeScanner = new Html5Qrcode("interactive-scanner");
+            const config = { fps: 10, qrbox: { width: 250, height: 150 } };
+            
+            html5QrcodeScanner.start(
+                { facingMode: "environment" }, 
+                config,
+                (decodedText) => {
+                    // 掃描成功
+                    document.getElementById('mobile-sku-input').value = decodedText;
+                    showNotification(`掃描成功: ${decodedText}`, "success");
+                    stopScanner();
+                    // 自動查詢
+                    window.searchProductAndPreview();
+                },
+                (errorMessage) => {
+                    // 掃描中忽略錯誤
+                }
+            ).catch(err => {
+                showNotification("無法啟動相機，請檢查權限", "error");
+                stopScanner();
+            });
+        }
+
+        function stopScanner() {
+            const scannerDiv = document.getElementById('scanner-container');
+            const scanBtn = document.getElementById('scan-btn');
+            scannerDiv.classList.add('hidden');
+            scanBtn.innerHTML = '<i class="fa-solid fa-camera mr-2"></i>掃描條碼';
+            scanBtn.classList.replace('bg-red-600', 'bg-indigo-600');
+            scanBtn.classList.replace('hover:bg-red-700', 'hover:bg-indigo-700');
+
+            if (html5QrcodeScanner) {
+                html5QrcodeScanner.stop().then(() => {
+                    html5QrcodeScanner = null;
+                }).catch(err => console.error(err));
+            }
+        }
+
+        // 手機端查詢產品並顯示預覽
+        window.searchProductAndPreview = async function() {
+            const sku = document.getElementById('mobile-sku-input').value.trim().toUpperCase();
+            if (!sku) {
+                showNotification("請輸入或掃描產品貨號", "warning");
+                return;
+            }
+
+            let product = null;
+            if (isOnline) {
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'products', sku);
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    product = docSnap.data();
+                }
+            } else {
+                product = localProducts[sku];
+            }
+
+            const previewArea = document.getElementById('mobile-preview-area');
+            const noProductArea = document.getElementById('mobile-no-product-area');
+            const inputForm = document.getElementById('mobile-print-form');
+
+            if (product) {
+                // 找到產品，顯示預覽與設定數量
+                noProductArea.classList.add('hidden');
+                previewArea.classList.remove('hidden');
+                inputForm.classList.remove('hidden');
+
+                document.getElementById('prev-name').innerText = product.name;
+                document.getElementById('prev-sku').innerText = product.id;
+                document.getElementById('prev-spec').innerText = product.spec || '無';
+                document.getElementById('prev-loc').innerText = product.loc || '無儲位';
+
+                // 產生預覽直式 QR Code
+                try {
+                    const qrContainer = document.getElementById('prev-qrcode');
+                    qrContainer.innerHTML = ''; // 清空
+                    new QRCode(qrContainer, {
+                        text: product.id,
+                        width: 55,
+                        height: 55,
+                        colorDark : "#000000",
+                        colorLight : "#ffffff",
+                        correctLevel : QRCode.CorrectLevel.H
+                    });
+                } catch(e) {
+                    console.error("預覽 QR Code 生成失敗", e);
+                }
+
+                // 存入臨時狀態
+                window.selectedProduct = product;
+            } else {
+                // 找不到產品，顯示新增引導
+                previewArea.classList.add('hidden');
+                inputForm.classList.add('hidden');
+                noProductArea.classList.remove('hidden');
+                document.getElementById('missing-sku-text').innerText = sku;
+                window.selectedProduct = null;
+            }
+        }
+
+        // 發送列印任務到雲端/本地隊列，並選填發送至 Google 試算表記錄
+        window.sendToPrintQueue = async function() {
+            if (!window.selectedProduct) return;
+            
+            const copies = parseInt(document.getElementById('print-copies').value) || 1;
+            const remark = document.getElementById('print-remark').value.trim();
+            const operator = document.getElementById('print-operator').value.trim() || window.settings.defaultOperator;
+            const timestamp = Date.now();
+
+            // 儲存常用人員姓名
+            if (operator && operator !== window.settings.defaultOperator) {
+                window.settings.defaultOperator = operator;
+                localStorage.setItem('defaultOperator', operator);
+            }
+
+            const printJob = {
+                sku: window.selectedProduct.id,
+                name: window.selectedProduct.name,
+                spec: window.selectedProduct.spec || '',
+                loc: window.selectedProduct.loc || '',
+                copies: copies,
+                remark: remark,
+                operator: operator,
+                status: 'pending', // pending, printing, completed
+                timestamp: timestamp
+            };
+
+            try {
+                // 1. 發送至 Firebase 雲端或本地
+                if (isOnline) {
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'printQueue'), printJob);
+                } else {
+                    localPrintQueue.push({ id: 'local_' + timestamp, ...printJob });
+                    renderQueue();
+                }
+
+                showNotification(`成功送出列印請求！數量: ${copies} 張`, "success");
+
+                // 2. 背景安全寫入 Google 試算表（非同步，不阻礙列印流程）
+                if (window.settings.googleLogScriptUrl) {
+                    logToGoogleSheet(printJob);
+                }
+                
+                // 重設手機介面
+                document.getElementById('mobile-sku-input').value = '';
+                document.getElementById('mobile-preview-area').classList.add('hidden');
+                document.getElementById('mobile-print-form').classList.add('hidden');
+                window.selectedProduct = null;
+            } catch (error) {
+                console.error("發送列印失敗:", error);
+                showNotification("傳送失敗，請重試", "error");
+            }
+        }
+
+        // 背景安全向 Google Apps Script 發送過帳請求 (新增至您的「標籤列印紀錄」工作表)
+        async function logToGoogleSheet(jobData) {
+            try {
+                const payload = {
+                    timestamp: new Date(jobData.timestamp).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }),
+                    sku: jobData.sku,
+                    name: jobData.name,
+                    spec: jobData.spec,
+                    loc: jobData.loc,
+                    copies: jobData.copies,
+                    operator: jobData.operator,
+                    remark: jobData.remark
+                };
+
+                // 使用 no-cors 模式安全發送，確保資料順利送達，不需要與外部共享權限
+                await fetch(window.settings.googleLogScriptUrl, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+                console.log("已將日誌發送至試算表登記");
+            } catch (e) {
+                console.error("寫入 Google Sheet 紀錄失敗:", e);
+            }
+        }
+
+        // 快速前往新增產品頁面
+        window.goToCreateProduct = function() {
+            const missingSku = document.getElementById('missing-sku-text').innerText;
+            window.switchTab('db');
+            openProductModal();
+            document.getElementById('modal-sku').value = missingSku;
+        }
+
+
+        // ==========================================
+        // 核心邏輯：電腦接收端 (PC Print Client)
+        // ==========================================
+        window.autoPrintEnabled = false;
+        let currentJobs = [];
+
+        window.toggleAutoPrint = function() {
+            window.autoPrintEnabled = document.getElementById('auto-print-toggle').checked;
+            const statusIndicator = document.getElementById('auto-print-status');
+            if (window.autoPrintEnabled) {
+                statusIndicator.innerText = "自動列印：已開啟";
+                statusIndicator.className = "text-sm font-semibold text-green-600 bg-green-50 px-3 py-1 rounded-full border border-green-200";
+                // 檢查是否有待處理的列印
+                checkAndTriggerAutoPrint();
+            } else {
+                statusIndicator.innerText = "自動列印：已關閉";
+                statusIndicator.className = "text-sm font-semibold text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200";
+            }
+        }
+
+        // 渲染列印排程清單
+        function renderQueue() {
+            const tbody = document.getElementById('queue-tbody');
+            tbody.innerHTML = '';
+
+            const jobs = isOnline ? currentJobs : localPrintQueue;
+
+            if (jobs.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="px-6 py-10 text-center text-slate-400">
+                            <i class="fa-solid fa-print text-4xl mb-3 block"></i>
+                            目前無列印任務
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            // 按時間排序 (新任務在最上面)
+            const sortedJobs = [...jobs].sort((a, b) => b.timestamp - a.timestamp);
+
+            sortedJobs.forEach(job => {
+                const date = new Date(job.timestamp).toLocaleTimeString();
+                let statusBadge = '';
+                if (job.status === 'pending') {
+                    statusBadge = `<span class="bg-amber-100 text-amber-800 text-xs px-2 py-1 rounded-full font-medium"><i class="fa-solid fa-spinner fa-spin mr-1"></i>待列印</span>`;
+                } else if (job.status === 'completed') {
+                    statusBadge = `<span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-medium"><i class="fa-solid fa-check mr-1"></i>已列印</span>`;
+                }
+
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-50 border-b border-slate-100";
+                tr.innerHTML = `
+                    <td class="px-6 py-4 text-xs text-slate-400 font-mono">${date}</td>
+                    <td class="px-6 py-4">
+                        <div class="font-bold text-slate-800 text-sm">${job.name}</div>
+                        <div class="text-xs text-slate-400 font-mono">${job.sku}</div>
+                    </td>
+                    <td class="px-6 py-4">
+                        <div class="text-xs text-slate-700">規格二: ${job.spec || '無'}</div>
+                        <div class="text-xs font-bold text-indigo-600">儲位: ${job.loc || '無'}</div>
+                        <div class="text-[10px] text-slate-400 mt-1">人員: ${job.operator || '未填'} ${job.remark ? `| 備註: ${job.remark}` : ''}</div>
+                    </td>
+                    <td class="px-6 py-4 text-center font-bold text-slate-700">${job.copies}</td>
+                    <td class="px-6 py-4 text-center">${statusBadge}</td>
+                    <td class="px-6 py-4 text-right">
+                        <button onclick="printJob('${job.id}')" class="text-indigo-600 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded text-xs font-semibold mr-2 transition">
+                            <i class="fa-solid fa-print mr-1"></i>列印
+                        </button>
+                        <button onclick="deleteJob('${job.id}')" class="text-red-600 hover:text-red-900 bg-red-50 hover:bg-red-100 p-1.5 rounded transition">
+                            <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // 清空所有列印歷史
+        window.clearQueue = async function() {
+            if (!confirm("確定要清空所有的列印歷史紀錄嗎？")) return;
+            
+            if (isOnline) {
+                for (const job of currentJobs) {
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'printQueue', job.id);
+                    await deleteDoc(docRef);
+                }
+            } else {
+                localPrintQueue = [];
+                renderQueue();
+            }
+            showNotification("已清空列印歷史紀錄", "success");
+        }
+
+        // 刪除單一列印工作
+        window.deleteJob = async function(jobId) {
+            if (isOnline) {
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'printQueue', jobId);
+                await deleteDoc(docRef);
+            } else {
+                localPrintQueue = localPrintQueue.filter(j => j.id !== jobId);
+                renderQueue();
+            }
+            showNotification("任務已刪除", "info");
+        }
+
+        // 執行標籤列印 (大改版：直式雙直行佈局、黑底白字、獨立大字體儲位，完美符合 image_e062c0.jpg)
+        window.printJob = async function(jobId) {
+            const jobs = isOnline ? currentJobs : localPrintQueue;
+            const job = jobs.find(j => j.id === jobId);
+            if (!job) return;
+
+            // 更新狀態為已完成
+            if (isOnline) {
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'printQueue', jobId);
+                await updateDoc(docRef, { status: 'completed' });
+            } else {
+                job.status = 'completed';
+                renderQueue();
+            }
+
+            // 載入列印版面資料
+            const printArea = document.getElementById('print-area');
+            printArea.innerHTML = '';
+
+            // 根據設定張數產生多個標籤
+            for (let i = 0; i < job.copies; i++) {
+                const label = document.createElement('div');
+                label.className = "inline-block bg-white border-4 border-black text-black text-left relative overflow-hidden p-0 m-2";
+                
+                // 依照您照片中大約 50mm 寬 x 80mm 高的直式規格比例設計
+                label.style.width = "48mm";
+                label.style.height = "78mm";
+                label.style.pageBreakAfter = "always";
+                
+                const uniqueQrId = `print-qr-${jobId}-${i}`;
+                
+                label.innerHTML = `
+                    <div class="flex flex-col h-full w-full justify-between" style="font-family: 'Microsoft JhengHei', sans-serif;">
+                        
+                        <!-- 區塊1：規格二 (14%) -->
+                        <div class="flex border-b-2 border-black" style="height: 14%;">
+                            <div class="w-[22%] border-r-2 border-black flex flex-col items-center justify-center text-[10px] font-black leading-tight">
+                                <span>規</span><span>格</span><span>二</span>
+                            </div>
+                            <div class="w-[78%] flex items-center justify-center font-extrabold text-[15px] px-2 font-mono tracking-widest text-center truncate">
+                                ${job.spec || '無'}
+                            </div>
+                        </div>
+                        
+                        <!-- 區塊2：品名 (38%) -->
+                        <div class="flex border-b-2 border-black" style="height: 38%;">
+                            <div class="w-[22%] border-r-2 border-black flex flex-col items-center justify-center text-[12px] font-black leading-normal">
+                                <span>品</span><span class="mt-1">名</span>
+                            </div>
+                            <!-- 極大粗體，完美包裝品名，字級設大為 18px，方便辨識 -->
+                            <div class="w-[78%] flex items-center justify-start text-[18px] font-black px-3 py-1 leading-snug break-all overflow-hidden line-clamp-3">
+                                ${job.name}
+                            </div>
+                        </div>
+                        
+                        <!-- 區塊3：貨號 (24%) -->
+                        <div class="flex border-b-2 border-black" style="height: 24%;">
+                            <div class="w-[22%] border-r-2 border-black flex flex-col items-center justify-center text-[12px] font-black leading-tight">
+                                <span>貨</span><span class="mt-1">號</span>
+                            </div>
+                            <div class="w-[78%] flex items-center justify-center text-[22px] font-black px-2 font-mono tracking-tight text-center">
+                                ${job.sku}
+                            </div>
+                        </div>
+                        
+                        <!-- 區塊4：QR碼 與 儲位 (24%) -->
+                        <div class="flex items-center" style="height: 24%;">
+                            <!-- 左下：QR Code (38%) -->
+                            <div class="w-[38%] flex items-center justify-center pl-2">
+                                <div id="${uniqueQrId}" class="w-[45px] h-[45px] flex items-center justify-center bg-white"></div>
+                            </div>
+                            <!-- 右下：儲位 (62%) 超大字級 24px 加粗，無需間隔線，大字辨識 -->
+                            <div class="w-[62%] flex items-center justify-center text-[23px] font-black px-1 font-sans text-center tracking-tighter truncate">
+                                ${job.loc || '無儲位'}
+                            </div>
+                        </div>
+
+                    </div>
+                `;
+                printArea.appendChild(label);
+
+                // 動態渲染直式標籤的 QR Code
+                setTimeout(() => {
+                    try {
+                        new QRCode(document.getElementById(uniqueQrId), {
+                            text: job.sku,
+                            width: 45,
+                            height: 45,
+                            colorDark : "#000000",
+                            colorLight : "#ffffff",
+                            correctLevel : QRCode.CorrectLevel.M
+                        });
+                    } catch (e) {
+                        console.error("標籤 QR Code 渲染失敗", e);
+                    }
+                }, 50);
+            }
+
+            // 觸發系統列印視窗
+            setTimeout(() => {
+                window.print();
+            }, 300);
+        }
+
+        // 自動列印偵測與觸發
+        function checkAndTriggerAutoPrint() {
+            if (!window.autoPrintEnabled) return;
+
+            const jobs = isOnline ? currentJobs : localPrintQueue;
+            const nextPendingJob = jobs.find(j => j.status === 'pending');
+
+            if (nextPendingJob) {
+                showNotification(`偵測到新任務，正在自動出紙：${nextPendingJob.name}`, "info");
+                window.printJob(nextPendingJob.id);
+            }
+        }
+
+
+        // ==========================================
+        // 產品資料庫管理 (Database View)
+        // ==========================================
+        window.dbProducts = {};
+
+        // 渲染產品對照清單
+        function renderProducts() {
+            const tbody = document.getElementById('product-tbody');
+            tbody.innerHTML = '';
+
+            const list = Object.values(isOnline ? window.dbProducts : localProducts);
+
+            if (list.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="5" class="px-6 py-10 text-center text-slate-400">
+                            目前資料庫無產品。請於右上方設定並點擊「從雲端 Sheet 同步」，或使用「手動新增」！
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            list.forEach(p => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-50 border-b border-slate-100";
+                tr.innerHTML = `
+                    <td class="px-6 py-4 font-mono font-semibold text-indigo-600">${p.id}</td>
+                    <td class="px-6 py-4">
+                        <div class="font-medium text-slate-800 text-sm line-clamp-1">${p.name}</div>
+                    </td>
+                    <td class="px-6 py-4">
+                        <span class="inline-block bg-black text-white text-xs font-bold px-2 py-0.5 rounded font-mono">${p.loc || '無'}</span>
+                    </td>
+                    <td class="px-6 py-4 text-sm text-slate-500 font-mono">${p.spec || '無'}</td>
+                    <td class="px-6 py-4 text-right">
+                        <button onclick="editProduct('${p.id}')" class="text-slate-600 hover:text-indigo-600 p-2 mr-1">
+                            <i class="fa-solid fa-pen-to-square"></i>
+                        </button>
+                        <button onclick="deleteProduct('${p.id}')" class="text-slate-400 hover:text-red-600 p-2">
+                            <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // 開啟新增/編輯 Modal
+        window.openProductModal = function() {
+            document.getElementById('product-modal-title').innerText = "新增標籤產品";
+            document.getElementById('modal-sku').disabled = false;
+            document.getElementById('product-form').reset();
+            document.getElementById('product-modal').classList.remove('hidden');
+        }
+
+        window.closeProductModal = function() {
+            document.getElementById('product-modal').classList.add('hidden');
+        }
+
+        // 編輯產品讀取資料
+        window.editProduct = function(sku) {
+            const p = isOnline ? window.dbProducts[sku] : localProducts[sku];
+            if (!p) return;
+
+            document.getElementById('product-modal-title').innerText = "編輯標籤產品";
+            document.getElementById('modal-sku').value = p.id;
+            document.getElementById('modal-sku').disabled = true; // 主鍵不能修改
+            document.getElementById('modal-name').value = p.name;
+            document.getElementById('modal-loc').value = p.loc || '';
+            document.getElementById('modal-spec').value = p.spec || '';
+
+            document.getElementById('product-modal').classList.remove('hidden');
+        }
+
+        // 儲存產品
+        window.saveProduct = async function(event) {
+            event.preventDefault();
+            const sku = document.getElementById('modal-sku').value.trim().toUpperCase();
+            const name = document.getElementById('modal-name').value.trim();
+            const loc = document.getElementById('modal-loc').value.trim().toUpperCase();
+            const spec = document.getElementById('modal-spec').value.trim();
+
+            if (!sku || !name) {
+                showNotification("貨號與品名為必填欄位", "warning");
+                return;
+            }
+
+            const productData = { id: sku, name, loc, spec };
+
+            try {
+                if (isOnline) {
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', sku), productData);
+                } else {
+                    localProducts[sku] = productData;
+                    renderProducts();
+                }
+
+                showNotification("產品儲存成功！", "success");
+                closeProductModal();
+            } catch (error) {
+                console.error("儲存失敗:", error);
+                showNotification("儲存失敗，請重試", "error");
+            }
+        }
+
+        // 刪除產品
+        window.deleteProduct = async function(sku) {
+            if (!confirm(`確定要刪除產品貨號 [${sku}] 嗎？`)) return;
+
+            try {
+                if (isOnline) {
+                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', sku));
+                } else {
+                    delete localProducts[sku];
+                    renderProducts();
+                }
+                showNotification("產品已成功刪除", "info");
+            } catch (error) {
+                console.error("刪除產品失敗:", error);
+                showNotification("刪除失敗，請重新操作", "error");
+            }
+        }
+
+
+        // ==========================================
+        // 安全雙向同步 (Secure Web API 同步，免網路公開發佈)
+        // ==========================================
+        window.saveSettings = async function() {
+            const scriptUrl = document.getElementById('settings-script-url').value.trim();
+
+            window.settings.googleLogScriptUrl = scriptUrl;
+
+            // 儲存至本地快取
+            localStorage.setItem('googleLogScriptUrl', scriptUrl);
+
+            // 儲存至 Firebase 雲端資料庫讓跨裝置共享一組網址設定
+            if (isOnline) {
+                try {
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'settings2'), {
+                        googleLogScriptUrl: scriptUrl
+                    });
+                } catch(e) {
+                    console.error("雲端設定儲存失敗:", e);
+                }
+            }
+
+            showNotification("設定儲存成功！", "success");
+            
+            // 如果填入了 Script API，立刻嘗試執行同步產品清單
+            if (scriptUrl) {
+                syncFromGoogleSheet();
+            }
+        }
+
+        function updateSettingsUI() {
+            const scriptEl = document.getElementById('settings-script-url');
+            if (scriptEl) scriptEl.value = window.settings.googleLogScriptUrl;
+        }
+
+        // 透過同一個安全的 Apps Script GET 方法同步拉取最新產品清單
+        window.syncFromGoogleSheet = async function() {
+            const url = window.settings.googleLogScriptUrl;
+            if (!url) {
+                showNotification("請先填入 Google App Script 部署網址", "warning");
+                return;
+            }
+
+            showNotification("安全同步產品資料中...", "info");
+
+            try {
+                // 向 Apps Script 安全拉取產品資料
+                const response = await fetch(url);
+                if (!response.ok) throw new Error("讀取錯誤，請確認 App Script 部署設定");
+                
+                const productsArray = await response.json();
+                
+                if (Array.isArray(productsArray)) {
+                    let successCount = 0;
+                    const batchPromises = [];
+                    
+                    productsArray.forEach(p => {
+                        const productData = {
+                            id: p.id,
+                            name: p.name,
+                            loc: p.loc || '無',
+                            spec: p.spec || '無'
+                        };
+                        
+                        if (isOnline) {
+                            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'products', p.id);
+                            batchPromises.push(setDoc(docRef, productData));
+                        } else {
+                            localProducts[p.id] = productData;
+                        }
+                        successCount++;
+                    });
+                    
+                    if (isOnline && batchPromises.length > 0) {
+                        await Promise.all(batchPromises);
+                    }
+                    
+                    showNotification(`安全同步成功！已載入 ${successCount} 筆產品資料`, "success");
+                    renderProducts();
+                } else {
+                    throw new Error("回傳格式非預期陣列");
+                }
+            } catch (e) {
+                console.error("同步失敗:", e);
+                showNotification("同步失敗！請確認 Web App 已部署為【任何人】皆可存取", "error");
+            }
+        }
+
+
+        // ==========================================
+        // 雲端即時同步 (Cloud Sync / Rule 3)
+        // ==========================================
+        function setupCloudListeners() {
+            // 1. 監聽產品庫
+            onSnapshot(
+                collection(db, 'artifacts', appId, 'public', 'data', 'products'),
+                (snapshot) => {
+                    const products = {};
+                    snapshot.forEach(doc => {
+                        products[doc.id] = doc.data();
+                    });
+                    window.dbProducts = products;
+                    renderProducts();
+                },
+                (error) => {
+                    console.error("產品庫同步錯誤:", error);
+                    showNotification("同步產品資料庫時出錯", "error");
+                }
+            );
+
+            // 2. 監聽列印佇列
+            onSnapshot(
+                collection(db, 'artifacts', appId, 'public', 'data', 'printQueue'),
+                (snapshot) => {
+                    const jobs = [];
+                    snapshot.forEach(doc => {
+                        jobs.push({ id: doc.id, ...doc.data() });
+                    });
+                    currentJobs = jobs;
+                    renderQueue();
+                    
+                    // 自動觸發列印檢查
+                    checkAndTriggerAutoPrint();
+                },
+                (error) => {
+                    console.error("列印佇列同步錯誤:", error);
+                    showNotification("同步列印工作時出錯", "error");
+                }
+            );
+        }
+
+        // ==========================================
+        // 初始化載入
+        // ==========================================
+        window.onload = function() {
+            initFirebase();
+            
+            // 載入預設設定至 UI
+            updateSettingsUI();
+            document.getElementById('print-operator').value = window.settings.defaultOperator;
+
+            // 綁定表單送出
+            document.getElementById('product-form').addEventListener('submit', window.saveProduct);
+            
+            // 預先產生條碼展示樣例 (Footer 直式 QR展示)
+            try {
+                new QRCode(document.getElementById("demo-barcode-1"), { text: "319-1361", width: 40, height: 40 });
+                new QRCode(document.getElementById("demo-barcode-2"), { text: "328-002", width: 40, height: 40 });
+            } catch(e) {
+                console.log(e);
+            }
+        }
+
+        // 通知工具
+        function showNotification(msg, type = "info") {
+            const toast = document.createElement('div');
+            let bg = "bg-slate-800 text-white";
+            if (type === "success") bg = "bg-emerald-600 text-white";
+            if (type === "warning") bg = "bg-amber-500 text-slate-900";
+            if (type === "error") bg = "bg-rose-600 text-white";
+
+            toast.className = `fixed bottom-4 right-4 ${bg} px-4 py-3 rounded-lg shadow-xl z-50 transition-all duration-300 flex items-center gap-2 transform translate-y-10 opacity-0`;
+            toast.innerHTML = `
+                <i class="fa-solid ${type === 'success' ? 'fa-circle-check' : type === 'warning' ? 'fa-triangle-exclamation' : 'fa-info-circle'}"></i>
+                <span class="text-sm font-medium">${msg}</span>
+            `;
+
+            document.body.appendChild(toast);
+            
+            // 動畫浮現
+            setTimeout(() => {
+                toast.classList.remove('translate-y-10', 'opacity-0');
+            }, 100);
+
+            // 消失並移除
+            setTimeout(() => {
+                toast.classList.add('translate-y-10', 'opacity-0');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+    </script>
+
+    <!-- 列印排版放置區 (僅在列印時被看見) -->
+    <div id="print-area" class="hidden"></div>
+
+    <!-- 主控台頁首 -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-40 no-print">
+        <div class="max-w-6xl mx-auto px-4 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
+            <div class="flex items-center gap-3">
+                <div class="bg-indigo-600 text-white p-2.5 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-100">
+                    <i class="fa-solid fa-tags text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold text-slate-800">智慧進貨標籤列印系統 2.0</h1>
+                    <p class="text-xs text-slate-500">直式大字體版面 • 安全雙向同步中繼 API</p>
+                </div>
+            </div>
+            
+            <!-- 模式切換導覽列 -->
+            <nav class="flex border border-slate-200 rounded-lg overflow-hidden bg-slate-50 p-1">
+                <button id="tab-btn-mobile" onclick="switchTab('mobile')" class="tab-btn px-4 py-2 text-sm font-semibold rounded-md transition-all flex items-center gap-2 text-indigo-600 border-indigo-600 bg-indigo-50 border">
+                    <i class="fa-solid fa-mobile-screen"></i> 手機輸入端
+                </button>
+                <button id="tab-btn-pc" onclick="switchTab('pc')" class="tab-btn px-4 py-2 text-sm font-semibold rounded-md transition-all flex items-center gap-2 text-slate-500 border-transparent">
+                    <i class="fa-solid fa-desktop"></i> 電腦列印端
+                </button>
+                <button id="tab-btn-db" onclick="switchTab('db')" class="tab-btn px-4 py-2 text-sm font-semibold rounded-md transition-all flex items-center gap-2 text-slate-500 border-transparent">
+                    <i class="fa-solid fa-database"></i> 雲端整合與設定
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <!-- 主內容區 -->
+    <main class="max-w-6xl mx-auto px-4 py-6 flex-grow w-full no-print">
+        
+        <!-- ----------------手機輸入端 (Mobile View)---------------- -->
+        <section id="mobile-view" class="space-y-6">
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 max-w-lg mx-auto">
+                <div class="text-center mb-6">
+                    <span class="bg-indigo-100 text-indigo-800 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">輸入流程</span>
+                    <h2 class="text-lg font-bold text-slate-800 mt-2">1. 輸入或掃描產品貨號</h2>
+                    <p class="text-sm text-slate-500 mt-1">您可以手動輸入 Google 試算表之商品貨號，或用鏡頭掃條碼</p>
+                </div>
+
+                <!-- 手機相機掃描容器 -->
+                <div id="scanner-container" class="hidden mb-4 overflow-hidden rounded-lg border border-slate-200 bg-black relative">
+                    <div id="interactive-scanner" class="w-full"></div>
+                </div>
+
+                <!-- 搜尋/輸入群組 -->
+                <div class="flex gap-2">
+                    <button id="scan-btn" onclick="toggleScanner()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-lg font-semibold transition flex items-center justify-center shrink-0">
+                        <i class="fa-solid fa-camera mr-2"></i>掃描條碼
+                    </button>
+                    <div class="relative flex-grow">
+                        <input id="mobile-sku-input" type="text" placeholder="手動輸入貨號 (如 319-1361)..." class="w-full border border-slate-300 rounded-lg pl-4 pr-10 py-3 font-mono font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <button onclick="searchProductAndPreview()" class="absolute right-2 top-2 text-slate-400 hover:text-indigo-600 p-1.5 transition">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="text-xs text-slate-400 mt-2 text-center">
+                    測試貨號：輸入 <span class="font-bold underline cursor-pointer" onclick="document.getElementById('mobile-sku-input').value='319-1361'; searchProductAndPreview();">319-1361</span> 或 <span class="font-bold underline cursor-pointer" onclick="document.getElementById('mobile-sku-input').value='328-002'; searchProductAndPreview();">328-002</span>
+                </div>
+
+                <hr class="my-6 border-slate-100">
+
+                <!-- 搜尋無產品時的狀態 -->
+                <div id="mobile-no-product-area" class="hidden text-center py-4 bg-amber-50 border border-amber-200 rounded-lg p-4">
+                    <i class="fa-solid fa-triangle-exclamation text-amber-500 text-2xl mb-2"></i>
+                    <p class="text-sm font-semibold text-slate-700">找不到貨號為 "<span id="missing-sku-text" class="font-mono text-indigo-600"></span>" 的產品</p>
+                    <p class="text-xs text-slate-500 mt-1">請在「雲端整合與設定」中綁定您的 Apps Script Web API</p>
+                    <button onclick="goToCreateProduct()" class="mt-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition">
+                        <i class="fa-solid fa-plus mr-1"></i>手動新增此產品
+                    </button>
+                </div>
+
+                <!-- 標籤即時預覽區域 (大字體版) -->
+                <div id="mobile-preview-area" class="hidden space-y-3">
+                    <h3 class="text-sm font-semibold text-slate-600 flex items-center gap-1.5"><i class="fa-solid fa-eye"></i> 即時標籤預覽 (2.0 直式直書大字體版)：</h3>
+                    <!-- 仿真標籤直式結構 -->
+                    <div class="border-4 border-black rounded-xl bg-white p-0 mx-auto text-black relative select-none flex flex-col justify-between" style="width: 48mm; height: 78mm;">
+                        <!-- 規格二 -->
+                        <div class="flex border-b-2 border-black" style="height: 14%;">
+                            <div class="w-[22%] border-r-2 border-black flex flex-col items-center justify-center text-[9px] font-black leading-tight">
+                                <span>規</span><span>格</span><span>二</span>
+                            </div>
+                            <div id="prev-spec" class="w-[78%] flex items-center justify-center font-extrabold text-xs px-2 font-mono truncate text-center">
+                                無
+                            </div>
+                        </div>
+                        
+                        <!-- 品名 -->
+                        <div class="flex border-b-2 border-black" style="height: 38%;">
+                            <div class="w-[22%] border-r-2 border-black flex flex-col items-center justify-center text-[10px] font-black leading-normal">
+                                <span>品</span><span class="mt-1">名</span>
+                            </div>
+                            <div id="prev-name" class="w-[78%] flex items-center justify-start text-[15px] font-extrabold px-2 leading-snug line-clamp-3 font-sans break-all">
+                                產品品名
+                            </div>
+                        </div>
+                        
+                        <!-- 貨號 -->
+                        <div class="flex border-b-2 border-black" style="height: 24%;">
+                            <div class="w-[22%] border-r-2 border-black flex flex-col items-center justify-center text-[10px] font-black leading-tight">
+                                <span>貨</span><span class="mt-1">號</span>
+                            </div>
+                            <div id="prev-sku" class="w-[78%] flex items-center justify-center text-[17px] font-black px-1 font-mono tracking-tighter text-center">
+                                319-1361
+                            </div>
+                        </div>
+                        
+                        <!-- QR碼 與 儲位 -->
+                        <div class="flex items-center" style="height: 24%;">
+                            <div class="w-[38%] flex items-center justify-center pl-1.5">
+                                <div id="prev-qrcode" class="w-[42px] h-[42px] flex items-center justify-center bg-white"></div>
+                            </div>
+                            <div id="prev-loc" class="w-[62%] flex items-center justify-center text-[18px] font-black px-1 font-sans text-center truncate">
+                                7A-12-E01
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 列印張數與備註設定 -->
+                <div id="mobile-print-form" class="hidden mt-6 space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-500 mb-1">列印張數</label>
+                            <input id="print-copies" type="number" min="1" max="100" value="1" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-center font-bold text-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-500 mb-1">上架人員 (登記於試算表)</label>
+                            <input id="print-operator" type="text" placeholder="例: 小張" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1">備註 (登記於試算表)</label>
+                        <input id="print-remark" type="text" placeholder="例: 包裝稍有破損" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    
+                    <button onclick="sendToPrintQueue()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3.5 rounded-lg font-bold text-lg shadow-lg shadow-indigo-100 transition duration-150 flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-paper-plane"></i> 發送標籤並登錄試算表
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ----------------電腦列印端 (PC View)---------------- -->
+        <section id="pc-view" class="hidden space-y-6">
+            <!-- 狀態控制板 -->
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div class="flex items-center gap-4">
+                    <div class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="auto-print-toggle" onchange="toggleAutoPrint()" class="sr-only peer">
+                        <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                        <span class="ml-3 text-sm font-bold text-slate-700">開啟電腦自動列印模式</span>
+                    </div>
+                    <span id="auto-print-status" class="text-sm font-semibold text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
+                        自動列印：已關閉
+                    </span>
+                </div>
+                
+                <button onclick="clearQueue()" class="text-slate-500 hover:text-red-600 text-xs font-semibold flex items-center gap-1">
+                    <i class="fa-solid fa-trash-can"></i> 清除歷史紀錄
+                </button>
+            </div>
+
+            <!-- 列印隊列清單 -->
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="px-6 py-4 border-b border-slate-200 flex justify-between items-center">
+                    <h3 class="font-bold text-slate-800 flex items-center gap-2"><i class="fa-solid fa-rectangle-list text-indigo-600"></i> 當前列印請求隊列</h3>
+                    <span class="text-xs text-slate-400">手機端按下「發送」後，此處將自動秒速更新。若開啟自動列印，電腦會即時啟動列印對話框。</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-50 text-slate-500 text-xs font-bold uppercase border-b border-slate-200">
+                                <th class="px-6 py-3">接收時間</th>
+                                <th class="px-6 py-3">產品資料</th>
+                                <th class="px-6 py-3">規格與儲位</th>
+                                <th class="px-6 py-3 text-center">數量</th>
+                                <th class="px-6 py-3 text-center">狀態</th>
+                                <th class="px-6 py-3 text-right">手動操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="queue-tbody">
+                            <!-- JS 動態生成 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 印表機設定與教學 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="bg-white rounded-xl border border-slate-200 p-6 space-y-3">
+                    <h4 class="font-bold text-slate-800 flex items-center gap-2"><i class="fa-solid fa-screwdriver-wrench text-amber-500"></i> 直式標籤列印設定說明</h4>
+                    <ul class="text-xs text-slate-600 space-y-2 list-disc list-inside">
+                        <li><strong>尺寸設定</strong>：在您的標籤印表機設定中，將紙張大小設定為直式尺寸（寬約 50mm x 高 80mm 的規格比例）。</li>
+                        <li><strong>版面邊距</strong>：請將瀏覽器列印選項中的「邊距 (Margins)」設定為 <strong class="text-indigo-600">無 (None)</strong> 以獲得最完美對齊。</li>
+                        <li><strong>頁首頁尾</strong>：記得取消勾選「頁首和頁尾 (Headers and footers)」。</li>
+                    </ul>
+                </div>
+                <div class="bg-white rounded-xl border border-slate-200 p-6 flex flex-col justify-center items-center text-center">
+                    <i class="fa-solid fa-circle-nodes text-indigo-100 text-5xl mb-3"></i>
+                    <h4 class="font-bold text-slate-800">安全雲端網路架構</h4>
+                    <p class="text-xs text-slate-500 mt-1 max-w-sm">
+                        透過安全的 Google Apps Script 技術，您可以在多支手機與電腦間共享資料，而不必將整個試算表發佈到公眾網路上。
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ----------------產品資料庫與雲端設定 (Database View)---------------- -->
+        <section id="db-view" class="hidden space-y-6">
+            
+            <!-- Google 雲端安全雙向同步控制卡 -->
+            <div class="bg-gradient-to-r from-slate-900 to-slate-950 text-white rounded-xl shadow-lg border border-slate-800 p-6 space-y-4">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-shield-halved text-emerald-400 text-2xl"></i>
+                    <div>
+                        <h3 class="font-bold text-lg">Google 試算表【高安全性】一鍵雙向 API 設定</h3>
+                        <p class="text-xs text-slate-300">安全中繼技術：不需發佈試算表、不需共用連結，全面阻斷安全隱憂</p>
+                    </div>
+                </div>
+                
+                <div class="bg-white/5 border border-white/10 rounded-lg p-5 space-y-4">
+                    <div class="flex items-center justify-between">
+                        <span class="bg-emerald-500/20 text-emerald-300 text-xs font-bold px-3 py-1 rounded-full">
+                            <i class="fa-solid fa-key mr-1"></i>安全中繼 Web API (單一控制網址)
+                        </span>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Google App Script 網頁應用程式部署網址</label>
+                        <input id="settings-script-url" type="url" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-900 border border-white/20 rounded-lg px-3 py-3 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-400 text-slate-100">
+                    </div>
+                    <p class="text-[11px] text-slate-400 leading-relaxed">
+                        💡 <strong>這是什麼？</strong><br>
+                        我們使用這個唯一的網址，在 <strong>GET</strong> 時安全抓取產品庫，在 <strong>POST</strong> 時自動往您的「標籤列印紀錄」工作表登記資料。您無需在 Google 試算表中設定任何「發佈至網路」功能，極大保障試算表安全性。
+                    </p>
+                </div>
+                
+                <div class="flex justify-between items-center pt-2 border-t border-white/10">
+                    <div class="text-[11px] text-slate-400">設定將安全地保存並同步至本系統各端。</div>
+                    <div class="flex gap-2">
+                        <button onclick="syncFromGoogleSheet()" class="bg-slate-800 hover:bg-slate-700 text-emerald-400 font-bold text-xs px-4 py-2 rounded-lg border border-slate-700 transition flex items-center gap-1.5">
+                            <i class="fa-solid fa-rotate"></i> 立即安全同步
+                        </button>
+                        <button onclick="saveSettings()" class="bg-indigo-600 hover:bg-indigo-50 text-white font-bold text-xs px-5 py-2 rounded-lg transition flex items-center gap-1.5 shadow-md shadow-indigo-900/50">
+                            <i class="fa-solid fa-floppy-disk"></i> 儲存並啟用 API
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 產品條碼對照資料庫管理 -->
+            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div>
+                        <h3 class="font-bold text-slate-800 text-base">本地快取儲存之產品清單</h3>
+                        <p class="text-xs text-slate-500 mt-1">
+                            若無連線 Google Sheet，您也可以手動點擊「新增產品」來建立單筆對照資料。
+                        </p>
+                    </div>
+                    <button onclick="openProductModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm px-4 py-2.5 rounded-lg transition flex items-center gap-2 shadow-md shadow-indigo-100 shrink-0">
+                        <i class="fa-solid fa-plus"></i> 手動新增產品
+                    </button>
+                </div>
+
+                <!-- 產品總表 -->
+                <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50 text-slate-500 text-xs font-bold uppercase border-b border-slate-200">
+                                    <th class="px-6 py-3">商品選項貨號</th>
+                                    <th class="px-6 py-3">TMS品名</th>
+                                    <th class="px-6 py-3">儲位</th>
+                                    <th class="px-6 py-3">規格二</th>
+                                    <th class="px-6 py-3 text-right">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="product-tbody">
+                                <!-- JS 動態生成 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- 產品編輯單筆彈窗 Modal -->
+    <div id="product-modal" class="hidden fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden transform transition-all">
+            <div class="bg-indigo-600 text-white px-6 py-4 flex justify-between items-center">
+                <h3 id="product-modal-title" class="font-bold">新增/編輯標籤產品</h3>
+                <button onclick="closeProductModal()" class="text-white/80 hover:text-white transition text-xl"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <form id="product-form" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1">商品選項貨號 (對應 產品代號)</label>
+                    <input type="text" id="modal-sku" required placeholder="例: 319-1361" class="w-full border border-slate-300 rounded-lg px-3 py-2 font-mono uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1">TMS品名 (對應 品名)</label>
+                    <input type="text" id="modal-name" required placeholder="例: 15C2-加大4格藥盒(3884)" class="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1">儲位</label>
+                        <input type="text" id="modal-loc" placeholder="例: 7A-12-E01" class="w-full border border-slate-300 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1">規格二</label>
+                        <input type="text" id="modal-spec" placeholder="例: 8845" class="w-full border border-slate-300 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                </div>
+                <div class="pt-2 flex justify-end gap-3">
+                    <button type="button" onclick="closeProductModal()" class="px-4 py-2 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 font-medium text-sm transition">取消</button>
+                    <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-sm rounded-lg transition shadow-md shadow-indigo-100">儲存資料</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 頁尾 -->
+    <footer class="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-400 no-print">
+        <p>© 2026 智慧進貨標籤列印系統 - 安全 API 雙向對接版.</p>
+        <div class="flex justify-center items-center gap-8 mt-2">
+            <span class="flex items-center gap-2">
+                <div id="demo-barcode-1" class="w-10 h-10"></div>
+                <span>319-1361 (直式 QR 範例)</span>
+            </span>
+            <span class="flex items-center gap-2">
+                <div id="demo-barcode-2" class="w-10 h-10"></div>
+                <span>328-002 (直式 QR 範例)</span>
+            </span>
+        </div>
+    </footer>
+
+</body>
+</html>
