@@ -639,33 +639,17 @@
         // 執行標籤列印 (大改版：版面配合 100mm x 150mm 大標籤規格縮放，字體極致加大，且右下角加入「列印時間」與「上架人員」)
         // 【優化設計】：將儲位寬度比例從 60% 調升至 70% (QR Code 從 40% 縮小至 30%)，字體微調為 38px 並移除 truncate 防止儲位後半段被切掉。
         window.printJob = async function(jobId) {
-            let job = null;
-            let isDragon = false;
-            
-            // 優先搜尋一般佇列
             const jobs = isOnline ? currentJobs : localPrintQueue;
-            job = jobs.find(j => j.id === jobId);
-            
-            // 備用搜尋龍宮佇列 (【全新功能】)
-            if (!job) {
-                job = window.dragonPalaceQueue.find(j => j.id === jobId);
-                if (job) isDragon = true;
-            }
-            
+            const job = jobs.find(j => j.id === jobId);
             if (!job) return;
 
             // 更新狀態為已完成
-            if (isDragon) {
-                job.status = 'completed';
-                renderDragonQueue();
+            if (isOnline) {
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'printQueue', jobId);
+                await updateDoc(docRef, { status: 'completed' });
             } else {
-                if (isOnline) {
-                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'printQueue', jobId);
-                    await updateDoc(docRef, { status: 'completed' });
-                } else {
-                    job.status = 'completed';
-                    renderQueue();
-                }
+                job.status = 'completed';
+                renderQueue();
             }
 
             // 載入列印版面資料
@@ -773,6 +757,122 @@
             }, 300);
         }
 
+        // 【全新大功能】：一鍵批次打包列印當前 PC 佇列所有 pending 狀態的標籤任務
+        window.printAllPending = async function() {
+            const jobs = isOnline ? currentJobs : localPrintQueue;
+            const pendingJobs = jobs.filter(j => j.status === 'pending');
+            
+            if (pendingJobs.length === 0) {
+                showNotification("目前無待列印的任務！", "warning");
+                return;
+            }
+
+            showNotification(`準備批次列印所有待處理任務（共 ${pendingJobs.length} 筆）...`, "info");
+            
+            // 載入列印版面資料
+            const printArea = document.getElementById('print-area');
+            printArea.innerHTML = '';
+            
+            const updatePromises = [];
+            
+            // 批次合併所有標籤至列印區域
+            pendingJobs.forEach((job) => {
+                // 更新狀態為已完成
+                if (isOnline) {
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'printQueue', job.id);
+                    updatePromises.push(updateDoc(docRef, { status: 'completed' }));
+                } else {
+                    job.status = 'completed';
+                }
+
+                const printDate = new Date(job.timestamp);
+                const formattedTime = printDate.getFullYear() + '/' +
+                                     String(printDate.getMonth() + 1).padStart(2, '0') + '/' +
+                                     String(printDate.getDate()).padStart(2, '0') + ' ' +
+                                     printDate.toTimeString().split(' ')[0];
+
+                for (let i = 0; i < job.copies; i++) {
+                    const label = document.createElement('div');
+                    label.className = "inline-block bg-white border-4 border-black text-black text-left relative overflow-hidden p-0 m-2";
+                    label.style.width = "96mm";
+                    label.style.height = "146mm";
+                    label.style.pageBreakAfter = "always";
+                    
+                    const uniqueQrId = `print-qr-${job.id}-${i}`;
+                    
+                    label.innerHTML = `
+                        <div class="flex flex-col h-full w-full justify-between p-4 relative" style="font-family: 'Microsoft JhengHei', sans-serif; box-sizing: border-box;">
+                            <div class="flex border-b-4 border-black pb-2" style="height: 12%;">
+                                <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[18px] font-black leading-tight">
+                                    <span>規</span><span>格</span><span>二</span>
+                                </div>
+                                <div class="w-[80%] flex items-center justify-center font-extrabold text-[32px] px-2 font-mono tracking-widest text-center truncate">
+                                    ${job.spec || '無'}
+                                </div>
+                            </div>
+                            <div class="flex border-b-4 border-black py-2" style="height: 38%;">
+                                <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[20px] font-black leading-normal">
+                                    <span>品</span><span class="mt-2">名</span>
+                                </div>
+                                <div class="w-[80%] flex items-center justify-start text-[32px] font-black px-4 leading-snug break-all overflow-hidden line-clamp-3">
+                                    ${job.name}
+                                </div>
+                            </div>
+                            <div class="flex border-b-4 border-black py-2" style="height: 22%;">
+                                <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[20px] font-black leading-tight">
+                                    <span>貨</span><span class="mt-2">號</span>
+                                </div>
+                                <div class="w-[80%] flex items-center justify-center text-[38px] font-black px-2 font-mono tracking-wide text-center">
+                                    ${job.sku}
+                                </div>
+                            </div>
+                            <div class="flex items-center pt-2 pb-6" style="height: 28%;">
+                                <div class="w-[30%] flex items-center justify-center pl-2">
+                                    <div id="${uniqueQrId}" class="w-[90px] h-[90px] flex items-center justify-center bg-white"></div>
+                                </div>
+                                <div class="w-[70%] flex items-center justify-center text-[38px] font-black px-2 font-sans text-center tracking-tighter whitespace-nowrap overflow-visible">
+                                    ${job.loc || '無儲位'}
+                                </div>
+                            </div>
+                            <div class="absolute bottom-2 right-4 text-[11px] font-extrabold text-slate-800 text-right leading-tight tracking-tight select-none">
+                                人員: ${job.operator || '上架人員'}<br>
+                                時間: ${formattedTime}
+                            </div>
+                        </div>
+                    `;
+                    printArea.appendChild(label);
+
+                    // 異步生成 QR Code
+                    setTimeout(() => {
+                        try {
+                            new QRCode(document.getElementById(uniqueQrId), {
+                                text: job.sku,
+                                width: 90,
+                                height: 90,
+                                colorDark : "#000000",
+                                colorLight : "#ffffff",
+                                correctLevel : QRCode.CorrectLevel.M
+                            });
+                        } catch (e) {
+                            console.error("標籤 QR Code 遞迴渲染失敗", e);
+                        }
+                    }, 50);
+                }
+            });
+
+            // 線上模式進行狀態批次同步
+            if (isOnline && updatePromises.length > 0) {
+                await Promise.all(updatePromises);
+            } else {
+                renderQueue();
+            }
+
+            // 延遲出紙，留足夠時間生成二維碼
+            setTimeout(() => {
+                window.print();
+            }, 500);
+        };
+
         // 自動列印偵測與觸發
         function checkAndTriggerAutoPrint() {
             if (!window.autoPrintEnabled) return;
@@ -781,7 +881,7 @@
             const nextPendingJob = jobs.find(j => j.status === 'pending');
 
             if (nextPendingJob) {
-                showNotification(`偵測到新任務，正在自動出紙：${nextPendingJob.name}`, "info");
+                showNotification("偵測到新任務，自動列印已觸發", "info");
                 window.printJob(nextPendingJob.id);
             }
         }
@@ -813,6 +913,105 @@
             }
         }
 
+        // 【全新大功能】：龍宮端一鍵批次列印所有待處理任務
+        window.printAllDragonPending = function() {
+            const pendingJobs = window.dragonPalaceQueue.filter(j => j.status === 'pending');
+            
+            if (pendingJobs.length === 0) {
+                showNotification("目前無待列印的龍宮任務！", "warning");
+                return;
+            }
+
+            showNotification(`準備批次列印所有待處理龍宮任務（共 ${pendingJobs.length} 筆）...`, "info");
+            
+            // 載入列印版面資料
+            const printArea = document.getElementById('print-area');
+            printArea.innerHTML = '';
+            
+            pendingJobs.forEach((job) => {
+                job.status = 'completed';
+
+                const printDate = new Date(job.timestamp);
+                const formattedTime = printDate.getFullYear() + '/' +
+                                     String(printDate.getMonth() + 1).padStart(2, '0') + '/' +
+                                     String(printDate.getDate()).padStart(2, '0') + ' ' +
+                                     printDate.toTimeString().split(' ')[0];
+
+                for (let i = 0; i < job.copies; i++) {
+                    const label = document.createElement('div');
+                    label.className = "inline-block bg-white border-4 border-black text-black text-left relative overflow-hidden p-0 m-2";
+                    label.style.width = "96mm";
+                    label.style.height = "146mm";
+                    label.style.pageBreakAfter = "always";
+                    
+                    const uniqueQrId = `print-qr-${job.id}-${i}`;
+                    
+                    label.innerHTML = `
+                        <div class="flex flex-col h-full w-full justify-between p-4 relative" style="font-family: 'Microsoft JhengHei', sans-serif; box-sizing: border-box;">
+                            <div class="flex border-b-4 border-black pb-2" style="height: 12%;">
+                                <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[18px] font-black leading-tight">
+                                    <span>規</span><span>格</span><span>二</span>
+                                </div>
+                                <div class="w-[80%] flex items-center justify-center font-extrabold text-[32px] px-2 font-mono tracking-widest text-center truncate">
+                                    ${job.spec || '無'}
+                                </div>
+                            </div>
+                            <div class="flex border-b-4 border-black py-2" style="height: 38%;">
+                                <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[20px] font-black leading-normal">
+                                    <span>品</span><span class="mt-2">名</span>
+                                </div>
+                                <div class="w-[80%] flex items-center justify-start text-[32px] font-black px-4 leading-snug break-all overflow-hidden line-clamp-3">
+                                    ${job.name}
+                                </div>
+                            </div>
+                            <div class="flex border-b-4 border-black py-2" style="height: 22%;">
+                                <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[20px] font-black leading-tight">
+                                    <span>貨</span><span class="mt-2">號</span>
+                                </div>
+                                <div class="w-[80%] flex items-center justify-center text-[38px] font-black px-2 font-mono tracking-wide text-center">
+                                    ${job.sku}
+                                </div>
+                            </div>
+                            <div class="flex items-center pt-2 pb-6" style="height: 28%;">
+                                <div class="w-[30%] flex items-center justify-center pl-2">
+                                    <div id="${uniqueQrId}" class="w-[90px] h-[90px] flex items-center justify-center bg-white"></div>
+                                </div>
+                                <div class="w-[70%] flex items-center justify-center text-[38px] font-black px-2 font-sans text-center tracking-tighter whitespace-nowrap overflow-visible">
+                                    ${job.loc || '無儲位'}
+                                </div>
+                            </div>
+                            <div class="absolute bottom-2 right-4 text-[11px] font-extrabold text-slate-800 text-right leading-tight tracking-tight select-none">
+                                人員: ${job.operator || '上架人員'}<br>
+                                時間: ${formattedTime}
+                            </div>
+                        </div>
+                    `;
+                    printArea.appendChild(label);
+
+                    setTimeout(() => {
+                        try {
+                            new QRCode(document.getElementById(uniqueQrId), {
+                                text: job.sku,
+                                width: 90,
+                                height: 90,
+                                colorDark : "#000000",
+                                colorLight : "#ffffff",
+                                correctLevel : QRCode.CorrectLevel.M
+                            });
+                        } catch (e) {
+                            console.error("標籤 QR Code 渲染失敗", e);
+                        }
+                    }, 50);
+                }
+            });
+
+            renderDragonQueue();
+
+            setTimeout(() => {
+                window.print();
+            }, 500);
+        };
+
         // 建立/重設龍宮舊登記資料的排除基線 (確保開網頁前的不重複印)
         window.syncDragonPalaceBaseline = async function() {
             const url = window.settings.googleLogScriptUrl;
@@ -823,7 +1022,7 @@
             
             try {
                 const pollUrl = url + "?action=getDragonPalace";
-                const response = await fetch(pollUrl, { method: 'GET', mode: 'cors' });
+                const response = await fetch(pollUrl, { mode: 'cors' });
                 if (response.ok) {
                     const jobs = await response.json();
                     if (Array.isArray(jobs)) {
@@ -945,7 +1144,7 @@
             const queryVal = document.getElementById('db-search-input').value.trim().toLowerCase();
             const list = Object.values(localProducts);
 
-            // 如果沒輸入關鍵字，不渲染任何產品卡片（保持 DOM 的極致輕量）
+            // 如果沒輸入關鍵字，不渲染 any 產品卡片（保持 DOM 的極致輕量）
             if (!queryVal) {
                 tbody.innerHTML = `
                     <tr>
@@ -1160,6 +1359,7 @@
             }
         }
 
+
         // ==========================================
         // 雲端即時同步 (Cloud Sync / Rule 3)
         // ==========================================
@@ -1212,6 +1412,7 @@
                 }
             }
         }, 3000); // 每 3 秒檢查一次試算表有無手機發過來的指令
+
 
         // ==========================================
         // 【全新功能】：龍宮分庫新登記列印監聽輪詢 (每 3 秒一次)
@@ -1270,9 +1471,12 @@
             }
         }, 3000);
 
+        // 【全新功能】：補回更新設定輸入欄位值的 UI 函數
         function updateSettingsUI() {
             const scriptEl = document.getElementById('settings-script-url');
-            if (scriptEl) scriptEl.value = window.settings.googleLogScriptUrl;
+            if (scriptEl) {
+                scriptEl.value = window.settings.googleLogScriptUrl;
+            }
         }
 
         // 初始化載入
@@ -1346,7 +1550,7 @@
                 </div>
                 <div>
                     <h1 class="text-xl font-bold text-slate-800">智慧進貨標籤列印系統 2.3</h1>
-                    <p class="text-xs text-slate-500">大字直式標籤 • 零延遲模糊搜尋與多分庫同步優化版</p>
+                    <p class="text-xs text-slate-500">直式大字體版面 • 零延遲模糊搜尋與極速同步大升級</p>
                 </div>
             </div>
             
@@ -1511,7 +1715,7 @@
         <section id="pc-view" class="hidden space-y-6">
             <!-- 狀態控制板 -->
             <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div class="flex items-center gap-4">
+                <div class="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full md:w-auto">
                     <label class="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" id="auto-print-toggle" onchange="toggleAutoPrint()" class="sr-only peer">
                         <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
@@ -1520,6 +1724,10 @@
                     <span id="auto-print-status" class="text-sm font-semibold text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
                         自動列印：已關閉
                     </span>
+                    <!-- 【新功能按鈕】：一鍵打包列印所有 PC 佇列 pending 任務 -->
+                    <button onclick="printAllPending()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-md transition-all flex items-center gap-1.5 self-stretch sm:self-auto justify-center">
+                        <i class="fa-solid fa-print"></i> 一鍵列印所有待列印
+                    </button>
                 </div>
                 
                 <button onclick="clearQueue()" class="text-slate-500 hover:text-red-600 text-xs font-semibold flex items-center gap-1">
@@ -1564,7 +1772,7 @@
                 </div>
                 <div class="bg-white rounded-xl border border-slate-200 p-6 flex flex-col justify-center items-center text-center">
                     <i class="fa-solid fa-circle-nodes text-indigo-100 text-5xl mb-3"></i>
-                    <h4 class="font-bold text-slate-800">安全雲端網路架構</h4>
+                    <h4 class="font-bold text-slate-800">安全雲端網路架儲</h4>
                     <p class="text-xs text-slate-500 mt-1 max-w-sm">
                         透過安全的 Google Apps Script 技術，您可以在多支手機與電腦間共享資料，而不必將整個試算表發佈到公眾網路上。
                     </p>
@@ -1577,7 +1785,7 @@
         <section id="dragon-view" class="hidden space-y-6">
             <!-- 狀態控制板 -->
             <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div class="flex flex-col md:flex-row items-start md:items-center gap-4">
+                <div class="flex flex-col lg:flex-row items-start lg:items-center gap-4 w-full md:w-auto">
                     <label class="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" id="auto-print-toggle-dragon" onchange="toggleAutoPrintDragon()" class="sr-only peer">
                         <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
@@ -1589,9 +1797,13 @@
                     <span id="dragon-baseline-status" class="text-xs text-slate-500 font-semibold bg-slate-100 border border-slate-200 px-3 py-1 rounded-full">
                         正在安全建立歷史資料基線...
                     </span>
+                    <!-- 【新功能按鈕】：一鍵列印所有龍宮分庫 pending 任務 -->
+                    <button onclick="printAllDragonPending()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-md transition-all flex items-center gap-1.5 self-stretch lg:self-auto justify-center">
+                        <i class="fa-solid fa-dragon"></i> 一鍵列印所有待列印(龍宮)
+                    </button>
                 </div>
                 
-                <div class="flex gap-2">
+                <div class="flex gap-2 w-full md:w-auto justify-end">
                     <button onclick="syncDragonPalaceBaseline()" class="text-indigo-600 hover:text-indigo-800 text-xs font-semibold flex items-center gap-1 bg-indigo-50 px-2.5 py-1.5 rounded-lg border border-indigo-100 transition">
                         <i class="fa-solid fa-rotate"></i> 重新設定監聽基線
                     </button>
