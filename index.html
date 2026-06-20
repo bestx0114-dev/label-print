@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>百思特標籤列印系統</title>
+    <title>智慧進貨標籤列印系統</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- FontAwesome Icons -->
@@ -638,18 +638,38 @@
 
         // 執行標籤列印 (大改版：版面配合 100mm x 150mm 大標籤規格縮放，字體極致加大，且右下角加入「列印時間」與「上架人員」)
         // 【優化設計】：將儲位寬度比例從 60% 調升至 70% (QR Code 從 40% 縮小至 30%)，字體微調為 38px 並移除 truncate 防止儲位後半段被切掉。
+        // 【修正核心】：同時相容一般排程與「龍宮專屬排程」雙向檢索 (解密自動列印/手動列印沒反應的問題)
         window.printJob = async function(jobId) {
+            let job = null;
+            let isDragon = false;
+
+            // 1. 優先搜尋一般佇列
             const jobs = isOnline ? currentJobs : localPrintQueue;
-            const job = jobs.find(j => j.id === jobId);
-            if (!job) return;
+            job = jobs.find(j => j.id === jobId);
+
+            // 2. 備用搜尋龍宮佇列
+            if (!job) {
+                job = window.dragonPalaceQueue.find(j => j.id === jobId);
+                if (job) isDragon = true;
+            }
+
+            if (!job) {
+                console.error("找不到此列印任務:", jobId);
+                return;
+            }
 
             // 更新狀態為已完成
-            if (isOnline) {
-                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'printQueue', jobId);
-                await updateDoc(docRef, { status: 'completed' });
-            } else {
+            if (isDragon) {
                 job.status = 'completed';
-                renderQueue();
+                renderDragonQueue();
+            } else {
+                if (isOnline) {
+                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'printQueue', jobId);
+                    await updateDoc(docRef, { status: 'completed' });
+                } else {
+                    job.status = 'completed';
+                    renderQueue();
+                }
             }
 
             // 載入列印版面資料
@@ -767,7 +787,7 @@
                 return;
             }
 
-            showNotification(`準備批次列印所有待處理任務（共 ${pendingJobs.length} 筆）...`, "info");
+            showNotification("準備批次列印所有待處理任務...", "info");
             
             // 載入列印版面資料
             const printArea = document.getElementById('print-area');
@@ -1076,12 +1096,23 @@
                     statusBadge = `<span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-medium"><i class="fa-solid fa-check mr-1"></i>已列印</span>`;
                 }
 
+                // 檢查品名是否是預設引導狀態 (增加排障提示)
+                let nameHtml = `<div class="font-bold text-slate-800 text-sm">${job.name}</div>`;
+                if (job.name.includes("品名未在對照表內")) {
+                    nameHtml = `
+                        <div class="font-bold text-rose-600 text-sm">${job.name}</div>
+                        <div class="text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded mt-0.5 inline-block border border-amber-100">
+                            <i class="fa-solid fa-triangle-exclamation mr-1"></i>此貨號在「對應表」工作表查無此資料
+                        </div>
+                    `;
+                }
+
                 const tr = document.createElement('tr');
                 tr.className = "hover:bg-slate-50 border-b border-slate-100";
                 tr.innerHTML = `
                     <td class="px-6 py-4 text-xs text-slate-400 font-mono">${date}</td>
                     <td class="px-6 py-4">
-                        <div class="font-bold text-slate-800 text-sm">${job.name}</div>
+                        ${nameHtml}
                         <div class="text-xs text-slate-400 font-mono">${job.sku}</div>
                     </td>
                     <td class="px-6 py-4">
@@ -1549,8 +1580,8 @@
                     <i class="fa-solid fa-tags text-xl"></i>
                 </div>
                 <div>
-                    <h1 class="text-xl font-bold text-slate-800">百思特進貨標籤列印系統 2.4</h1>
-                    <p class="text-xs text-slate-500">幫您快速列印標籤的好幫手</p>
+                    <h1 class="text-xl font-bold text-slate-800">智慧進貨標籤列印系統 2.3</h1>
+                    <p class="text-xs text-slate-500">大字直式標籤 • 零延遲模糊搜尋與極速同步大升級</p>
                 </div>
             </div>
             
@@ -1772,7 +1803,7 @@
                 </div>
                 <div class="bg-white rounded-xl border border-slate-200 p-6 flex flex-col justify-center items-center text-center">
                     <i class="fa-solid fa-circle-nodes text-indigo-100 text-5xl mb-3"></i>
-                    <h4 class="font-bold text-slate-800">安全雲端網路架儲</h4>
+                    <h4 class="font-bold text-slate-800">安全雲端網路架構</h4>
                     <p class="text-xs text-slate-500 mt-1 max-w-sm">
                         透過安全的 Google Apps Script 技術，您可以在多支手機與電腦間共享資料，而不必將整個試算表發佈到公眾網路上。
                     </p>
