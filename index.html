@@ -102,6 +102,34 @@
             defaultOperator: localStorage.getItem('defaultOperator') || '上架人員'
         };
 
+        // 【安全修復】：通知工具移入 type="module" 模組內，並掛載至 window 確保全域可用
+        window.showNotification = function(msg, type = "info") {
+            const toast = document.createElement('div');
+            let bg = "bg-slate-800 text-white";
+            if (type === "success") bg = "bg-emerald-600 text-white";
+            if (type === "warning") bg = "bg-amber-500 text-slate-900";
+            if (type === "error") bg = "bg-rose-600 text-white";
+
+            toast.className = `fixed bottom-4 right-4 ${bg} px-4 py-3 rounded-lg shadow-xl z-50 transition-all duration-300 flex items-center gap-2 transform translate-y-10 opacity-0`;
+            toast.innerHTML = `
+                <i class="fa-solid ${type === 'success' ? 'fa-circle-check' : type === 'warning' ? 'fa-triangle-exclamation' : 'fa-info-circle'}"></i>
+                <span class="text-sm font-medium">${msg}</span>
+            `;
+
+            document.body.appendChild(toast);
+            
+            // 動畫浮現
+            setTimeout(() => {
+                toast.classList.remove('translate-y-10', 'opacity-0');
+            }, 100);
+
+            // 消失並移除
+            setTimeout(() => {
+                toast.classList.add('translate-y-10', 'opacity-0');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
         // 初始化 Firebase
         async function initFirebase() {
             try {
@@ -119,7 +147,7 @@
                     }
                     
                     isOnline = true;
-                    showNotification("雲端資料庫已同步連線", "success");
+                    window.showNotification("雲端資料庫已同步連線", "success");
                     
                     // 監聽雲端列印隊列
                     setupCloudListeners();
@@ -139,7 +167,7 @@
                     }
                 } else {
                     console.log("使用本地模擬模式運作中");
-                    showNotification("系統已啟動：Google 試算表安全中繼同步啟用中！", "info");
+                    window.showNotification("系統已啟動：Google 試算表安全中繼同步啟用中！", "info");
                     renderProducts();
                     renderQueue();
                 }
@@ -147,7 +175,7 @@
                 // 開網頁時自動非同步同步一次，確保快取最新，且「完全不卡網頁載入」
                 if (window.settings.googleLogScriptUrl) {
                     // 安全修復：加上 .catch 避免 unhandled promise rejection 影響主執行緒
-                    syncFromGoogleSheet(true).catch(err => {
+                    window.syncFromGoogleSheet(true).catch(err => {
                         console.warn("背景自動同步失敗:", err);
                     });
                     
@@ -156,7 +184,7 @@
                 }
             } catch (error) {
                 console.error("Firebase 初始化失敗:", error);
-                showNotification("已切換至 Google 試算表安全中繼模式", "warning");
+                window.showNotification("已切換至 Google 試算表安全中繼模式", "warning");
                 renderProducts();
                 renderQueue();
             }
@@ -202,6 +230,7 @@
             // 每次切換到龍宮頁面，重新繪製列表
             if (tab === 'dragon') {
                 renderDragonQueue();
+                updateProductCountBadge(); // 確保龍宮分頁的同步時間資訊正確
             }
         }
 
@@ -245,7 +274,7 @@
                 (decodedText) => {
                     // 掃描成功
                     document.getElementById('mobile-sku-input').value = decodedText;
-                    showNotification(`掃描成功: ${decodedText}`, "success");
+                    window.showNotification(`掃描成功: ${decodedText}`, "success");
                     stopScanner();
                     // 自動查詢
                     window.searchProductAndPreview();
@@ -254,7 +283,7 @@
                     // 掃描中忽略錯誤
                 }
             ).catch(err => {
-                showNotification("無法啟動相機，請檢查權限", "error");
+                window.showNotification("無法啟動相機，請檢查權限", "error");
                 stopScanner();
             });
         }
@@ -282,7 +311,7 @@
         window.searchProductAndPreview = async function() {
             const sku = document.getElementById('mobile-sku-input').value.trim().toUpperCase();
             if (!sku) {
-                showNotification("請輸入或掃描產品貨號", "warning");
+                window.showNotification("請輸入或掃描產品貨號", "warning");
                 return;
             }
 
@@ -295,7 +324,7 @@
 
             // 2. 如果快取中找不到，且有 API 網址，發起【線上即時單筆查詢】
             if (!product && window.settings.googleLogScriptUrl) {
-                showNotification("本地無此產品，正在線上即時查詢...", "info");
+                window.showNotification("本地無此產品，正在線上即時查詢...", "info");
                 try {
                     const queryUrl = window.settings.googleLogScriptUrl + "?sku=" + encodeURIComponent(sku);
                     // 【安全修復】：加入 mode: 'cors' 參數以利安全跳轉
@@ -442,7 +471,7 @@
                 if (isOnline) {
                     // Firebase 雲端正常連線模式
                     await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'printQueue'), printJob);
-                    showNotification(`成功送出列印請求！數量: ${copies} 張`, "success");
+                    window.showNotification(`成功送出列印請求！數量: ${copies} 張`, "success");
                     if (window.settings.googleLogScriptUrl) {
                         logToGoogleSheet(printJob);
                     }
@@ -461,7 +490,7 @@
                             timestamp: timestamp
                         };
                         
-                        showNotification("正在透過 Google 安全管道發送列印請求...", "info");
+                        window.showNotification("正在透過 Google 安全管道發送列印請求...", "info");
                         
                         await fetch(window.settings.googleLogScriptUrl, {
                             method: 'POST',
@@ -472,12 +501,12 @@
                             body: JSON.stringify(payload)
                         });
                         
-                        showNotification(`同步成功！已派發至電腦接收佇列。數量: ${copies} 張`, "success");
+                        window.showNotification(`同步成功！已派發至電腦接收佇列。數量: ${copies} 張`, "success");
                     } else {
                         // 純單機模擬，不支援跨裝置
                         localPrintQueue.push({ id: 'local_' + timestamp, ...printJob });
                         renderQueue();
-                        showNotification(`已暫存至本地佇列 (未設定雲端連結無法跨裝置同步)`, "warning");
+                        window.showNotification(`已暫存至本地佇列 (未設定雲端連結無法跨裝置同步)`, "warning");
                     }
                 }
                 
@@ -488,7 +517,7 @@
                 window.selectedProduct = null;
             } catch (error) {
                 console.error("發送列印失敗:", error);
-                showNotification("傳送失敗，請重試", "error");
+                window.showNotification("傳送失敗，請重試", "error");
             }
         }
 
@@ -621,7 +650,7 @@
                 localPrintQueue = [];
                 renderQueue();
             }
-            showNotification("已清空列印歷史紀錄", "success");
+            window.showNotification("已清空列印歷史紀錄", "success");
         }
 
         // 刪除單一列印工作
@@ -633,7 +662,7 @@
                 localPrintQueue = localPrintQueue.filter(j => j.id !== jobId);
                 renderQueue();
             }
-            showNotification("任務已刪除", "info");
+            window.showNotification("任務已刪除", "info");
         }
 
         // 執行標籤列印 (大改版：版面配合 100mm x 150mm 大標籤規格縮放，字體極致加大，且右下角加入「列印時間」與「上架人員」)
@@ -721,7 +750,7 @@
                         <!-- 區塊3：貨號 (貨號條碼文字放大至 38px) -->
                         <div class="flex border-b-4 border-black py-2" style="height: 22%;">
                             <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[20px] font-black leading-tight">
-                                <span>貨</span><span class="mt-2">號</span>
+                                <span>貨</span><span class="mt-1">號</span>
                             </div>
                             <div class="w-[80%] flex items-center justify-center text-[38px] font-black px-2 font-mono tracking-wide text-center">
                                 ${job.sku}
@@ -730,17 +759,17 @@
                         
                         <!-- 區塊4：QR碼 與 儲位 (儲位字體微調至 38px 確保完美容納，QR Code 縮小至 30%，儲位擴大至 70% 並移除 truncate 防切) -->
                         <div class="flex items-center pt-2 pb-6" style="height: 28%;">
-                            <!-- 左下：QR Code (30%) -->
+                            <!-- box1：QR Code (30%) -->
                             <div class="w-[30%] flex items-center justify-center pl-2">
                                 <div id="${uniqueQrId}" class="w-[90px] h-[90px] flex items-center justify-center bg-white"></div>
                             </div>
-                            <!-- 右下：儲位 (70%) -->
+                            <!-- box2：儲位 (70%) -->
                             <div class="w-[70%] flex items-center justify-center text-[38px] font-black px-2 font-sans text-center tracking-tighter whitespace-nowrap overflow-visible">
                                 ${job.loc || '無儲位'}
                             </div>
                         </div>
 
-                        <!-- 【全新大升級】：標籤最右下角加上小字顯示「列印時間」與「上架人員」，使用絕對定位防止干擾主版面 -->
+                        <!-- 標籤最右下角加上小字顯示「列印時間」與「上架人員」，使用絕對定位防止干擾主版面 -->
                         <div class="absolute bottom-2 right-4 text-[11px] font-extrabold text-slate-800 text-right leading-tight tracking-tight select-none">
                             人員: ${job.operator || '上架人員'}<br>
                             時間: ${formattedTime}
@@ -777,17 +806,17 @@
             }, 300);
         }
 
-        // 【全新大功能】：一鍵批次打包列印當前 PC 佇列所有 pending 狀態的標籤任務
+        // 一鍵批次打包列印當前 PC 佇列所有 pending 狀態的標籤任務
         window.printAllPending = async function() {
             const jobs = isOnline ? currentJobs : localPrintQueue;
             const pendingJobs = jobs.filter(j => j.status === 'pending');
             
             if (pendingJobs.length === 0) {
-                showNotification("目前無待列印的任務！", "warning");
+                window.showNotification("目前無待列印的任務！", "warning");
                 return;
             }
 
-            showNotification("準備批次列印所有待處理任務...", "info");
+            window.showNotification("準備批次列印所有待處理任務...", "info");
             
             // 載入列印版面資料
             const printArea = document.getElementById('print-area');
@@ -901,7 +930,7 @@
             const nextPendingJob = jobs.find(j => j.status === 'pending');
 
             if (nextPendingJob) {
-                showNotification("偵測到新任務，自動列印已觸發", "info");
+                window.showNotification("偵測到新任務，自動列印已觸發", "info");
                 window.printJob(nextPendingJob.id);
             }
         }
@@ -928,21 +957,21 @@
             if (!window.dragonAutoPrintEnabled) return;
             const nextPendingJob = window.dragonPalaceQueue.find(j => j.status === 'pending');
             if (nextPendingJob) {
-                showNotification(`偵測到新龍宮任務，正在自動出紙：${nextPendingJob.name}`, "info");
+                window.showNotification(`偵測到新龍宮任務，正在自動出紙：${nextPendingJob.name}`, "info");
                 window.printJob(nextPendingJob.id);
             }
         }
 
-        // 【全新大功能】：龍宮端一鍵批次列印所有待處理任務
+        // 龍宮端一鍵批次列印所有待處理任務
         window.printAllDragonPending = function() {
             const pendingJobs = window.dragonPalaceQueue.filter(j => j.status === 'pending');
             
             if (pendingJobs.length === 0) {
-                showNotification("目前無待列印的龍宮任務！", "warning");
+                window.showNotification("目前無待列印的龍宮任務！", "warning");
                 return;
             }
 
-            showNotification(`準備批次列印所有待處理龍宮任務（共 ${pendingJobs.length} 筆）...`, "info");
+            window.showNotification(`準備批次列印所有待處理龍宮任務（共 ${pendingJobs.length} 筆）...`, "info");
             
             // 載入列印版面資料
             const printArea = document.getElementById('print-area');
@@ -1102,7 +1131,7 @@
                     nameHtml = `
                         <div class="font-bold text-rose-600 text-sm">${job.name}</div>
                         <div class="text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded mt-0.5 inline-block border border-amber-100">
-                            <i class="fa-solid fa-triangle-exclamation mr-1"></i>此貨號在「對應表」工作表查無此資料
+                            <i class="fa-solid fa-triangle-exclamation mr-1"></i>此貨號在「對應表」工作表查無資料，請至對照表頁面更新
                         </div>
                     `;
                 }
@@ -1138,14 +1167,14 @@
         window.deleteDragonJob = function(jobId) {
             window.dragonPalaceQueue = window.dragonPalaceQueue.filter(j => j.id !== jobId);
             renderDragonQueue();
-            showNotification("龍宮任務已刪除", "info");
+            window.showNotification("龍宮任務已刪除", "info");
         }
 
         window.clearDragonQueue = function() {
             if (!confirm("確定要清空龍宮所有的列印紀錄嗎？")) return;
             window.dragonPalaceQueue = [];
             renderDragonQueue();
-            showNotification("已清空龍宮列印歷史", "success");
+            window.showNotification("已清空龍宮列印歷史", "success");
         }
 
 
@@ -1157,19 +1186,28 @@
         // 更新快取狀態面板
         function updateProductCountBadge() {
             const list = Object.values(localProducts);
-            document.getElementById('cache-product-count').innerText = list.length.toLocaleString();
+            
+            const countEl = document.getElementById('cache-product-count');
+            if (countEl) countEl.innerText = list.length.toLocaleString();
             
             const lastSync = localStorage.getItem('lastSyncTime') || '從未同步';
-            document.getElementById('cache-sync-time').innerText = lastSync;
+            
+            const syncTimeEl1 = document.getElementById('cache-sync-time');
+            if (syncTimeEl1) syncTimeEl1.innerText = lastSync;
+            
+            const syncTimeEl2 = document.getElementById('dragon-sync-time');
+            if (syncTimeEl2) syncTimeEl2.innerText = lastSync;
             
             // 預先清空搜尋列表避免多餘 DOM 繪製
-            document.getElementById('db-search-input').value = '';
+            const searchInput = document.getElementById('db-search-input');
+            if (searchInput) searchInput.value = '';
             renderProducts();
         }
 
         // 【極大優化】：只有在使用主動關鍵字搜尋時，才會動態渲染「前 50 筆」資料，解決卡頓！
         function renderProducts() {
             const tbody = document.getElementById('product-tbody');
+            if (!tbody) return;
             tbody.innerHTML = '';
 
             const queryVal = document.getElementById('db-search-input').value.trim().toLowerCase();
@@ -1282,7 +1320,7 @@
             const spec = document.getElementById('modal-spec').value.trim();
 
             if (!sku || !name) {
-                showNotification("貨號與品名為必填欄位", "warning");
+                window.showNotification("貨號與品名為必填欄位", "warning");
                 return;
             }
 
@@ -1291,7 +1329,7 @@
             localStorage.setItem('cachedProducts', JSON.stringify(localProducts));
             updateProductCountBadge();
 
-            showNotification("產品已儲存至本地快取！", "success");
+            window.showNotification("產品已儲存至本地快取！", "success");
             closeProductModal();
         }
 
@@ -1302,7 +1340,7 @@
             delete localProducts[sku];
             localStorage.setItem('cachedProducts', JSON.stringify(localProducts));
             updateProductCountBadge();
-            showNotification("產品已從本地刪除", "info");
+            window.showNotification("產品已從本地刪除", "info");
         }
 
 
@@ -1328,24 +1366,25 @@
                 }
             }
 
-            showNotification("設定儲存成功！", "success");
+            window.showNotification("設定儲存成功！", "success");
             
             // 如果填入了 Script API，立刻嘗試執行同步產品清單與重新對齊龍宮
             if (scriptUrl) {
-                syncFromGoogleSheet();
+                window.syncFromGoogleSheet();
                 syncDragonPalaceBaseline();
             }
         }
 
         // 只將產品清單極速下載並一口氣塞入 LocalStorage，完全不走 Firebase 逐筆寫入
+        // 【修復】：將此函數直接綁定到全域 window.syncFromGoogleSheet 上，解決 ES 模組外部 onclick 呼叫的 ReferenceError
         window.syncFromGoogleSheet = async function(isBackground = false) {
             const url = window.settings.googleLogScriptUrl;
             if (!url) {
-                if (!isBackground) showNotification("請先填入 Google App Script 部署網址", "warning");
+                if (!isBackground) window.showNotification("請先填入 Google App Script 部署網址", "warning");
                 return;
             }
 
-            if (!isBackground) showNotification("安全同步產品資料中...", "info");
+            if (!isBackground) window.showNotification("安全同步產品資料中...", "info");
 
             try {
                 // 向 Apps Script 安全拉取整張試算表對照表
@@ -1374,7 +1413,7 @@
                     const nowStr = new Date().toLocaleString();
                     localStorage.setItem('lastSyncTime', nowStr);
                     
-                    if (!isBackground) showNotification(`同步成功！已載入 ${productsArray.length} 筆產品資料`, "success");
+                    if (!isBackground) window.showNotification(`同步成功！已載入 ${productsArray.length} 筆產品資料`, "success");
                     
                     // 更新主控狀態與計數
                     updateProductCountBadge();
@@ -1385,7 +1424,7 @@
                 console.error("同步失敗:", e);
                 // 【安全引導修復】：當 fetch 失敗時，給予清楚直觀的帳號衝突與權限設定引導說明
                 if (!isBackground) {
-                    showNotification("同步失敗！通常為 Google 多重帳號衝突或權限未設為「任何人」，請查看主控台排障指引", "error");
+                    window.showNotification("同步失敗！通常為 Google 多重帳號衝突或權限未設為「任何人」，請查看主控台排障指引", "error");
                 }
             }
         }
@@ -1411,7 +1450,7 @@
                 },
                 (error) => {
                     console.error("列印佇列同步錯誤:", error);
-                    showNotification("同步列印工作時出錯", "error");
+                    window.showNotification("同步列印工作時出錯", "error");
                 }
             );
         }
@@ -1486,7 +1525,7 @@
                                     window.dragonPalaceQueue.push(newJob);
                                     hasNew = true;
                                     
-                                    showNotification(`🐉 龍宮偵測到新登記產品：${newJob.name} (數量 ${newJob.copies} 張)`, "success");
+                                    window.showNotification(`🐉 龍宮偵測到新登記產品：${newJob.name} (數量 ${newJob.copies} 張)`, "success");
                                 }
                             });
                             
@@ -1502,71 +1541,17 @@
             }
         }, 3000);
 
-        // 【全新功能】：補回更新設定輸入欄位值的 UI 函數
-        function updateSettingsUI() {
-            const scriptEl = document.getElementById('settings-script-url');
-            if (scriptEl) {
-                scriptEl.value = window.settings.googleLogScriptUrl;
+        // ==========================================
+        // 【全新功能】：每 1 小時 (3,600,000 毫秒) 自動在背景更新同步產品對照表一次
+        // ==========================================
+        setInterval(async () => {
+            if (window.settings.googleLogScriptUrl) {
+                console.log("正在執行定時背景自動同步產品對照表（每小時）...");
+                window.syncFromGoogleSheet(true).catch(err => {
+                    console.warn("定時背景自動同步失敗:", err);
+                });
             }
-        }
-
-        // 初始化載入
-        window.onload = function() {
-            initFirebase();
-            
-            // 載入預設設定至 UI
-            updateSettingsUI();
-            document.getElementById('print-operator').value = window.settings.defaultOperator;
-
-            // 綁定表單送出
-            document.getElementById('product-form').addEventListener('submit', window.saveProduct);
-            
-            // 【修復與大升級】：讓手機端人員欄位輸入時，同步即刻更新即時標籤預覽中的人員姓名
-            document.getElementById('print-operator').addEventListener('input', (e) => {
-                const val = e.target.value.trim() || window.settings.defaultOperator;
-                const prevOpEl = document.getElementById('prev-operator-text');
-                if (prevOpEl) prevOpEl.innerText = val;
-            });
-
-            // 初始化產品數值與面板
-            updateProductCountBadge();
-
-            // 預先產生條碼展示樣例 (Footer 直式 QR展示)
-            try {
-                new QRCode(document.getElementById("demo-barcode-1"), { text: "319-1361", width: 40, height: 40 });
-                new QRCode(document.getElementById("demo-barcode-2"), { text: "328-002", width: 40, height: 40 });
-            } catch(e) {
-                console.log(e);
-            }
-        }
-
-        // 通知工具
-        function showNotification(msg, type = "info") {
-            const toast = document.createElement('div');
-            let bg = "bg-slate-800 text-white";
-            if (type === "success") bg = "bg-emerald-600 text-white";
-            if (type === "warning") bg = "bg-amber-500 text-slate-900";
-            if (type === "error") bg = "bg-rose-600 text-white";
-
-            toast.className = `fixed bottom-4 right-4 ${bg} px-4 py-3 rounded-lg shadow-xl z-50 transition-all duration-300 flex items-center gap-2 transform translate-y-10 opacity-0`;
-            toast.innerHTML = `
-                <i class="fa-solid ${type === 'success' ? 'fa-circle-check' : type === 'warning' ? 'fa-triangle-exclamation' : 'fa-info-circle'}"></i>
-                <span class="text-sm font-medium">${msg}</span>
-            `;
-
-            document.body.appendChild(toast);
-            
-            // 動畫浮現
-            setTimeout(() => {
-                toast.classList.remove('translate-y-10', 'opacity-0');
-            }, 100);
-
-            // 消失並移除
-            setTimeout(() => {
-                toast.classList.add('translate-y-10', 'opacity-0');
-                setTimeout(() => toast.remove(), 300);
-            }, 3000);
-        }
+        }, 3600000); // 3600 秒 * 1000 毫秒 = 1 小時
     </script>
 
     <!-- 列印排版放置區 (僅在列印時被看見) -->
@@ -1828,6 +1813,14 @@
                     <span id="dragon-baseline-status" class="text-xs text-slate-500 font-semibold bg-slate-100 border border-slate-200 px-3 py-1 rounded-full">
                         正在安全建立歷史資料基線...
                     </span>
+                    <!-- 【全新新增】：在龍宮控制板直接顯示產品對照表同步狀態與一鍵立即同步按鈕 -->
+                    <div class="flex items-center gap-2 bg-emerald-50 border border-emerald-100 rounded-full px-3 py-1 text-xs text-emerald-800 font-semibold">
+                        <i class="fa-solid fa-rotate"></i>
+                        <span>對照表同步：<span id="dragon-sync-time" class="font-bold">讀取中...</span></span>
+                        <button onclick="syncFromGoogleSheet()" class="ml-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] px-2 py-0.5 rounded-full transition flex items-center gap-1">
+                            <i class="fa-solid fa-cloud-arrow-down"></i> 立即同步
+                        </button>
+                    </div>
                     <!-- 【新功能按鈕】：一鍵列印所有龍宮分庫 pending 任務 -->
                     <button onclick="printAllDragonPending()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-lg shadow-md transition-all flex items-center gap-1.5 self-stretch lg:self-auto justify-center">
                         <i class="fa-solid fa-dragon"></i> 一鍵列印所有待列印(龍宮)
