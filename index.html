@@ -1552,6 +1552,28 @@
                 });
             }
         }, 3600000); // 3600 秒 * 1000 毫秒 = 1 小時
+
+
+        // ==========================================
+        // 補齊缺失的 updateSettingsUI 函數
+        // 用於將目前設定值填回 UI 輸入框（Firebase 雲端讀取設定後呼叫）
+        // ==========================================
+        function updateSettingsUI() {
+            const settingsInput = document.getElementById('settings-script-url');
+            if (settingsInput && window.settings.googleLogScriptUrl) {
+                settingsInput.value = window.settings.googleLogScriptUrl;
+            }
+            updateProductCountBadge();
+        }
+
+        // ==========================================
+        // 頁面啟動初始化
+        // 【修復】：type="module" 腳本在整份 HTML 解析完成後才執行（等同 defer），
+        // DOM 已就緒，可直接呼叫 initFirebase() 以觸發：
+        //   1. Google 試算表「對應表」自動同步（產品名稱 & 儲位）
+        //   2. 龍宮排除舊資料基線建立（syncDragonPalaceBaseline）
+        // ==========================================
+        initFirebase();
     </script>
 
     <!-- 列印排版放置區 (僅在列印時被看見) -->
