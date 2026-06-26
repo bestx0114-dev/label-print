@@ -354,7 +354,7 @@
                 document.getElementById('prev-spec').innerText = product.spec || '無';
                 document.getElementById('prev-loc').innerText = product.loc || '無儲位';
 
-                // 即時預覽：同步右下角小字（人員與列印時間）
+                // 即時預覽：同步左下角小字（人員與列印時間）
                 const operatorVal = document.getElementById('print-operator').value.trim() || window.settings.defaultOperator;
                 document.getElementById('prev-operator-text').innerText = operatorVal;
                 
@@ -371,8 +371,8 @@
                     qrContainer.innerHTML = ''; // 清空
                     new QRCode(qrContainer, {
                         text: product.id,
-                        width: 55,
-                        height: 55,
+                        width: 42,
+                        height: 42,
                         colorDark : "#000000",
                         colorLight : "#ffffff",
                         correctLevel : QRCode.CorrectLevel.H
@@ -724,20 +724,21 @@
                 
                 const uniqueQrId = `print-qr-${jobId}-${i}`;
                 
+                // 標籤結構優化：縮窄貨號行，右下角騰出空間建立粗體6格手寫欄，左下角放置人員和時間
                 label.innerHTML = `
-                    <div class="flex flex-col h-full w-full justify-between p-4 relative" style="font-family: 'Microsoft JhengHei', sans-serif; box-sizing: border-box;">
+                    <div class="flex flex-col h-full w-full justify-between p-3 relative" style="font-family: 'Microsoft JhengHei', sans-serif; box-sizing: border-box;">
                         
-                        <!-- 區塊1：規格二 (加高加粗，字級設大) -->
-                        <div class="flex border-b-4 border-black pb-2" style="height: 12%;">
+                        <!-- 區塊1：規格二 (12% height) -->
+                        <div class="flex border-b-4 border-black py-1" style="height: 12%;">
                             <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[18px] font-black leading-tight">
                                 <span>規</span><span>格</span><span>二</span>
                             </div>
-                            <div class="w-[80%] flex items-center justify-center font-extrabold text-[32px] px-2 font-mono tracking-widest text-center truncate">
+                            <div class="w-[80%] flex items-center justify-center font-extrabold text-[28px] px-2 font-mono tracking-widest text-center truncate">
                                 ${job.spec || '無'}
                             </div>
                         </div>
                         
-                        <!-- 區塊2：品名 (加高加粗，字級顯著加大為 32px-36px 滿足大標籤清晰可見度) -->
+                        <!-- 區塊2：品名 (38% height) -->
                         <div class="flex border-b-4 border-black py-2" style="height: 38%;">
                             <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[20px] font-black leading-normal">
                                 <span>品</span><span class="mt-2">名</span>
@@ -747,45 +748,64 @@
                             </div>
                         </div>
                         
-                        <!-- 區塊3：貨號 (貨號條碼文字放大至 38px) -->
-                        <div class="flex border-b-4 border-black py-2" style="height: 22%;">
-                            <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[20px] font-black leading-tight">
-                                <span>貨</span><span class="mt-1">號</span>
+                        <!-- 區塊3：貨號 (縮窄列高：18% height，字體微縮防溢出) -->
+                        <div class="flex border-b-4 border-black py-1" style="height: 18%;">
+                            <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[16px] font-black leading-tight">
+                                <span>貨</span><span>號</span>
                             </div>
-                            <div class="w-[80%] flex items-center justify-center text-[38px] font-black px-2 font-mono tracking-wide text-center">
+                            <div class="w-[80%] flex items-center justify-center text-[32px] font-black px-2 font-mono tracking-wide text-center">
                                 ${job.sku}
                             </div>
                         </div>
                         
-                        <!-- 區塊4：QR碼 與 儲位 (儲位字體微調至 38px 確保完美容納，QR Code 縮小至 30%，儲位擴大至 70% 並移除 truncate 防切) -->
-                        <div class="flex items-center pt-2 pb-6" style="height: 28%;">
-                            <!-- box1：QR Code (30%) -->
-                            <div class="w-[30%] flex items-center justify-center pl-2">
-                                <div id="${uniqueQrId}" class="w-[90px] h-[90px] flex items-center justify-center bg-white"></div>
+                        <!-- 區塊4：QR碼、儲位、與備註表格 (32% height) -->
+                        <div class="flex items-stretch pt-2" style="height: 32%;">
+                            <!-- 左下側 (40%): QR Code + 下移的人員/列印時間 -->
+                            <div class="w-[40%] flex flex-col justify-between items-center h-full">
+                                <div id="${uniqueQrId}" class="w-[120px] h-[120px] flex items-center justify-center bg-white"></div>
+                                <div class="text-[10px] font-bold text-slate-800 text-left leading-tight tracking-tight select-none mt-1 w-full pl-2">
+                                    人員: ${job.operator || '上架人員'}<br>
+                                    時間: ${formattedTime}
+                                </div>
                             </div>
-                            <!-- box2：儲位 (70%) -->
-                            <div class="w-[70%] flex items-center justify-center text-[38px] font-black px-2 font-sans text-center tracking-tighter whitespace-nowrap overflow-visible">
-                                ${job.loc || '無儲位'}
+                            
+                            <!-- 右下側 (60%): 儲位 (往上移) + 手寫備註6格表 -->
+                            <div class="w-[60%] flex flex-col justify-between h-full pl-2">
+                                <!-- 儲位 (向上移動，字級38px，不截斷) -->
+                                <div class="text-[38px] font-black font-sans text-center tracking-tighter whitespace-nowrap overflow-visible leading-none">
+                                    ${job.loc || '無儲位'}
+                                </div>
+                                <!-- 6格手寫備註表 (3行 x 2列，黑框線) -->
+                                <table class="w-full border-2 border-black border-collapse mt-2" style="height: 111px;">
+                                    <tbody>
+                                        <tr class="border-b-2 border-black">
+                                            <td class="border-r-2 border-black" style="height: 37px; width: 50%;"></td>
+                                            <td style="width: 50%;"></td>
+                                        </tr>
+                                        <tr class="border-b-2 border-black">
+                                            <td class="border-r-2 border-black" style="height: 37px;"></td>
+                                            <td></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="border-r-2 border-black" style="height: 37px;"></td>
+                                            <td></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
-                        </div>
-
-                        <!-- 標籤最右下角加上小字顯示「列印時間」與「上架人員」，使用絕對定位防止干擾主版面 -->
-                        <div class="absolute bottom-2 right-4 text-[11px] font-extrabold text-slate-800 text-right leading-tight tracking-tight select-none">
-                            人員: ${job.operator || '上架人員'}<br>
-                            時間: ${formattedTime}
                         </div>
 
                     </div>
                 `;
                 printArea.appendChild(label);
 
-                // 動態渲染大尺寸直式標籤的 QR Code (寬高改為 90x90px)
+                // 動態渲染大尺寸直式標籤的 QR Code (寬高改為 120x120px)
                 setTimeout(() => {
                     try {
                         new QRCode(document.getElementById(uniqueQrId), {
                             text: job.sku,
-                            width: 90,
-                            height: 90,
+                            width: 120,
+                            height: 120,
                             colorDark : "#000000",
                             colorLight : "#ffffff",
                             correctLevel : QRCode.CorrectLevel.M
@@ -850,15 +870,19 @@
                     const uniqueQrId = `print-qr-${job.id}-${i}`;
                     
                     label.innerHTML = `
-                        <div class="flex flex-col h-full w-full justify-between p-4 relative" style="font-family: 'Microsoft JhengHei', sans-serif; box-sizing: border-box;">
-                            <div class="flex border-b-4 border-black pb-2" style="height: 12%;">
+                        <div class="flex flex-col h-full w-full justify-between p-3 relative" style="font-family: 'Microsoft JhengHei', sans-serif; box-sizing: border-box;">
+                            
+                            <!-- 區塊1：規格二 -->
+                            <div class="flex border-b-4 border-black py-1" style="height: 12%;">
                                 <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[18px] font-black leading-tight">
                                     <span>規</span><span>格</span><span>二</span>
                                 </div>
-                                <div class="w-[80%] flex items-center justify-center font-extrabold text-[32px] px-2 font-mono tracking-widest text-center truncate">
+                                <div class="w-[80%] flex items-center justify-center font-extrabold text-[28px] px-2 font-mono tracking-widest text-center truncate">
                                     ${job.spec || '無'}
                                 </div>
                             </div>
+                            
+                            <!-- 區塊2：品名 -->
                             <div class="flex border-b-4 border-black py-2" style="height: 38%;">
                                 <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[20px] font-black leading-normal">
                                     <span>品</span><span class="mt-2">名</span>
@@ -867,26 +891,52 @@
                                     ${job.name}
                                 </div>
                             </div>
-                            <div class="flex border-b-4 border-black py-2" style="height: 22%;">
-                                <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[20px] font-black leading-tight">
-                                    <span>貨</span><span class="mt-2">號</span>
+                            
+                            <!-- 區塊3：貨號 (列高18%) -->
+                            <div class="flex border-b-4 border-black py-1" style="height: 18%;">
+                                <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[16px] font-black leading-tight">
+                                    <span>貨</span><span>號</span>
                                 </div>
-                                <div class="w-[80%] flex items-center justify-center text-[38px] font-black px-2 font-mono tracking-wide text-center">
+                                <div class="w-[80%] flex items-center justify-center text-[32px] font-black px-2 font-mono tracking-wide text-center">
                                     ${job.sku}
                                 </div>
                             </div>
-                            <div class="flex items-center pt-2 pb-6" style="height: 28%;">
-                                <div class="w-[30%] flex items-center justify-center pl-2">
+                            
+                            <!-- 區塊4：QR碼、儲位、手寫備註表 (列高32%) -->
+                            <div class="flex items-stretch pt-2" style="height: 32%;">
+                                <!-- 左下側 (40%): QR Code + 下移的人員/列印時間 -->
+                                <div class="w-[40%] flex flex-col justify-between items-center h-full">
                                     <div id="${uniqueQrId}" class="w-[90px] h-[90px] flex items-center justify-center bg-white"></div>
+                                    <div class="text-[10px] font-bold text-slate-800 text-left leading-tight tracking-tight select-none mt-1 w-full pl-2">
+                                        人員: ${job.operator || '上架人員'}<br>
+                                        時間: ${formattedTime}
+                                    </div>
                                 </div>
-                                <div class="w-[70%] flex items-center justify-center text-[38px] font-black px-2 font-sans text-center tracking-tighter whitespace-nowrap overflow-visible">
-                                    ${job.loc || '無儲位'}
+                                
+                                <!-- 右下側 (60%): 儲位 + 手寫備註6格表 -->
+                                <div class="w-[60%] flex flex-col justify-between h-full pl-2">
+                                    <div class="text-[38px] font-black font-sans text-center tracking-tighter whitespace-nowrap overflow-visible leading-none">
+                                        ${job.loc || '無儲位'}
+                                    </div>
+                                    <table class="w-full border-2 border-black border-collapse mt-2" style="height: 60px;">
+                                        <tbody>
+                                            <tr class="border-b-2 border-black">
+                                                <td class="border-r-2 border-black" style="height: 20px; width: 50%;"></td>
+                                                <td style="width: 50%;"></td>
+                                            </tr>
+                                            <tr class="border-b-2 border-black">
+                                                <td class="border-r-2 border-black" style="height: 20px;"></td>
+                                                <td></td>
+                                            </tr>
+                                            <tr>
+                                                <td class="border-r-2 border-black" style="height: 20px;"></td>
+                                                <td></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
-                            <div class="absolute bottom-2 right-4 text-[11px] font-extrabold text-slate-800 text-right leading-tight tracking-tight select-none">
-                                人員: ${job.operator || '上架人員'}<br>
-                                時間: ${formattedTime}
-                            </div>
+
                         </div>
                     `;
                     printArea.appendChild(label);
@@ -996,12 +1046,12 @@
                     const uniqueQrId = `print-qr-${job.id}-${i}`;
                     
                     label.innerHTML = `
-                        <div class="flex flex-col h-full w-full justify-between p-4 relative" style="font-family: 'Microsoft JhengHei', sans-serif; box-sizing: border-box;">
-                            <div class="flex border-b-4 border-black pb-2" style="height: 12%;">
+                        <div class="flex flex-col h-full w-full justify-between p-3 relative" style="font-family: 'Microsoft JhengHei', sans-serif; box-sizing: border-box;">
+                            <div class="flex border-b-4 border-black py-1" style="height: 12%;">
                                 <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[18px] font-black leading-tight">
                                     <span>規</span><span>格</span><span>二</span>
                                 </div>
-                                <div class="w-[80%] flex items-center justify-center font-extrabold text-[32px] px-2 font-mono tracking-widest text-center truncate">
+                                <div class="w-[80%] flex items-center justify-center font-extrabold text-[28px] px-2 font-mono tracking-widest text-center truncate">
                                     ${job.spec || '無'}
                                 </div>
                             </div>
@@ -1013,25 +1063,46 @@
                                     ${job.name}
                                 </div>
                             </div>
-                            <div class="flex border-b-4 border-black py-2" style="height: 22%;">
-                                <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[20px] font-black leading-tight">
-                                    <span>貨</span><span class="mt-2">號</span>
+                            <div class="flex border-b-4 border-black py-1" style="height: 18%;">
+                                <div class="w-[20%] border-r-4 border-black flex flex-col items-center justify-center text-[16px] font-black leading-tight">
+                                    <span>貨</span><span>號</span>
                                 </div>
-                                <div class="w-[80%] flex items-center justify-center text-[38px] font-black px-2 font-mono tracking-wide text-center">
+                                <div class="w-[80%] flex items-center justify-center text-[32px] font-black px-2 font-mono tracking-wide text-center">
                                     ${job.sku}
                                 </div>
                             </div>
-                            <div class="flex items-center pt-2 pb-6" style="height: 28%;">
-                                <div class="w-[30%] flex items-center justify-center pl-2">
+                            <div class="flex items-stretch pt-2" style="height: 32%;">
+                                <!-- 左下側 (40%): QR Code + 下移的人員/列印時間 -->
+                                <div class="w-[40%] flex flex-col justify-between items-center h-full">
                                     <div id="${uniqueQrId}" class="w-[90px] h-[90px] flex items-center justify-center bg-white"></div>
+                                    <div class="text-[10px] font-bold text-slate-800 text-left leading-tight tracking-tight select-none mt-1 w-full pl-2">
+                                        人員: ${job.operator || '上架人員'}<br>
+                                        時間: ${formattedTime}
+                                    </div>
                                 </div>
-                                <div class="w-[70%] flex items-center justify-center text-[38px] font-black px-2 font-sans text-center tracking-tighter whitespace-nowrap overflow-visible">
-                                    ${job.loc || '無儲位'}
+                                
+                                <!-- 右下側 (60%): 儲位 + 手寫備註6格表 -->
+                                <div class="w-[60%] flex flex-col justify-between h-full pl-2">
+                                    <div class="text-[38px] font-black font-sans text-center tracking-tighter whitespace-nowrap overflow-visible leading-none">
+                                        ${job.loc || '無儲位'}
+                                    </div>
+                                    <table class="w-full border-2 border-black border-collapse mt-2" style="height: 60px;">
+                                        <tbody>
+                                            <tr class="border-b-2 border-black">
+                                                <td class="border-r-2 border-black" style="height: 20px; width: 50%;"></td>
+                                                <td style="width: 50%;"></td>
+                                            </tr>
+                                            <tr class="border-b-2 border-black">
+                                                <td class="border-r-2 border-black" style="height: 20px;"></td>
+                                                <td></td>
+                                            </tr>
+                                            <tr>
+                                                <td class="border-r-2 border-black" style="height: 20px;"></td>
+                                                <td></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
                                 </div>
-                            </div>
-                            <div class="absolute bottom-2 right-4 text-[11px] font-extrabold text-slate-800 text-right leading-tight tracking-tight select-none">
-                                人員: ${job.operator || '上架人員'}<br>
-                                時間: ${formattedTime}
                             </div>
                         </div>
                     `;
@@ -1186,21 +1257,17 @@
         // 更新快取狀態面板
         function updateProductCountBadge() {
             const list = Object.values(localProducts);
-            
-            const countEl = document.getElementById('cache-product-count');
-            if (countEl) countEl.innerText = list.length.toLocaleString();
+            document.getElementById('cache-product-count').innerText = list.length.toLocaleString();
             
             const lastSync = localStorage.getItem('lastSyncTime') || '從未同步';
+            document.getElementById('cache-sync-time').innerText = lastSync;
             
-            const syncTimeEl1 = document.getElementById('cache-sync-time');
-            if (syncTimeEl1) syncTimeEl1.innerText = lastSync;
+            // 預先更新龍宮與設定分頁的同步時間文字
+            const dragonSyncEl = document.getElementById('dragon-sync-time');
+            if (dragonSyncEl) dragonSyncEl.innerText = lastSync;
             
-            const syncTimeEl2 = document.getElementById('dragon-sync-time');
-            if (syncTimeEl2) syncTimeEl2.innerText = lastSync;
-            
-            // 預先清空搜尋列表避免多餘 DOM 繪製
-            const searchInput = document.getElementById('db-search-input');
-            if (searchInput) searchInput.value = '';
+            const dbSearchInput = document.getElementById('db-search-input');
+            if (dbSearchInput) dbSearchInput.value = '';
             renderProducts();
         }
 
@@ -1568,10 +1635,6 @@
 
         // ==========================================
         // 頁面啟動初始化
-        // 【修復】：type="module" 腳本在整份 HTML 解析完成後才執行（等同 defer），
-        // DOM 已就緒，可直接呼叫 initFirebase() 以觸發：
-        //   1. Google 試算表「對應表」自動同步（產品名稱 & 儲位）
-        //   2. 龍宮排除舊資料基線建立（syncDragonPalaceBaseline）
         // ==========================================
         initFirebase();
     </script>
@@ -1587,8 +1650,8 @@
                     <i class="fa-solid fa-tags text-xl"></i>
                 </div>
                 <div>
-                    <h1 class="text-xl font-bold text-slate-800">百思特標籤列印系統 2.3</h1>
-                    <p class="text-xs text-slate-500">快速列印儲位貼與第二庫存貼!</p>
+                    <h1 class="text-xl font-bold text-slate-800">百思特標籤列印系統 2.4</h1>
+                    <p class="text-xs text-slate-500">直式大標籤 • 手寫6格備註表專用升級版</p>
                 </div>
             </div>
             
@@ -1600,7 +1663,7 @@
                 <button id="tab-btn-pc" onclick="switchTab('pc')" class="tab-btn px-3 py-2 text-xs md:text-sm font-semibold rounded-md transition-all flex items-center gap-1.5 text-slate-500 border-transparent">
                     <i class="fa-solid fa-desktop"></i> 電腦列印端
                 </button>
-                <!-- 【新分頁：電腦列印端(龍宮)】 -->
+                <!-- 電腦列印端(龍宮) -->
                 <button id="tab-btn-dragon" onclick="switchTab('dragon')" class="tab-btn px-3 py-2 text-xs md:text-sm font-semibold rounded-md transition-all flex items-center gap-1.5 text-slate-500 border-transparent">
                     <i class="fa-solid fa-dragon"></i> 電腦列印端(龍宮)
                 </button>
@@ -1672,55 +1735,77 @@
                     </button>
                 </div>
 
-                <!-- 標籤即時預覽區域 (大字體版) -->
+                <!-- 標籤即時預覽區域 (大字體 + 手寫欄版) -->
                 <div id="mobile-preview-area" class="hidden space-y-3">
-                    <h3 class="text-sm font-semibold text-slate-600 flex items-center gap-1.5"><i class="fa-solid fa-eye"></i> 即時標籤預覽 (2.0 直式直書大字體版)：</h3>
+                    <h3 class="text-sm font-semibold text-slate-600 flex items-center gap-1.5"><i class="fa-solid fa-eye"></i> 即時標籤預覽 (2.4 直式 6格備註表新版)：</h3>
                     <!-- 仿真標籤直式結構 -->
-                    <div class="border-4 border-black rounded-xl bg-white p-0 mx-auto text-black relative select-none flex flex-col justify-between shadow-md" style="width: 48mm; height: 78mm;">
-                        <!-- 規格二 -->
-                        <div class="flex border-b-2 border-black" style="height: 14%;">
-                            <div class="w-[22%] border-r-2 border-black flex flex-col items-center justify-center text-[9px] font-black leading-tight">
+                    <div class="border-4 border-black rounded-xl bg-white p-0 mx-auto text-black relative select-none flex flex-col justify-between shadow-md" style="width: 48mm; height: 78mm; box-sizing: border-box; padding: 6px;">
+                        
+                        <!-- 規格二 (12%) -->
+                        <div class="flex border-b border-black" style="height: 12%;">
+                            <div class="w-[22%] border-r border-black flex flex-col items-center justify-center text-[7px] font-black leading-tight">
                                 <span>規</span><span>格</span><span>二</span>
                             </div>
-                            <div id="prev-spec" class="w-[78%] flex items-center justify-center font-extrabold text-xs px-2 font-mono truncate text-center">
+                            <div id="prev-spec" class="w-[78%] flex items-center justify-center font-extrabold text-[10px] px-2 font-mono truncate text-center">
                                 無
                             </div>
                         </div>
                         
-                        <!-- 品名 -->
-                        <div class="flex border-b-2 border-black" style="height: 38%;">
-                            <div class="w-[22%] border-r-2 border-black flex flex-col items-center justify-center text-[10px] font-black leading-normal">
-                                <span>品</span><span class="mt-1">名</span>
+                        <!-- 品名 (38%) -->
+                        <div class="flex border-b border-black" style="height: 38%;">
+                            <div class="w-[22%] border-r border-black flex flex-col items-center justify-center text-[8px] font-black leading-normal">
+                                <span>品</span><span class="mt-0.5">名</span>
                             </div>
-                            <div id="prev-name" class="w-[78%] flex items-center justify-start text-[15px] font-extrabold px-2 leading-snug line-clamp-3 font-sans break-all">
+                            <div id="prev-name" class="w-[78%] flex items-center justify-start text-[13px] font-extrabold px-1.5 leading-snug line-clamp-3 font-sans break-all">
                                 產品品名
                             </div>
                         </div>
                         
-                        <!-- 貨號 -->
-                        <div class="flex border-b-2 border-black" style="height: 24%;">
-                            <div class="w-[22%] border-r-2 border-black flex flex-col items-center justify-center text-[10px] font-black leading-tight">
-                                <span>貨</span><span class="mt-1">號</span>
+                        <!-- 貨號 (18% - 縮窄高度) -->
+                        <div class="flex border-b border-black" style="height: 18%;">
+                            <div class="w-[22%] border-r border-black flex flex-col items-center justify-center text-[8px] font-black leading-tight">
+                                <span>貨</span><span class="mt-0.5">號</span>
                             </div>
-                            <div id="prev-sku" class="w-[78%] flex items-center justify-center text-[17px] font-black px-1 font-mono tracking-tighter text-center">
+                            <div id="prev-sku" class="w-[78%] flex items-center justify-center text-[14px] font-black px-1 font-mono tracking-tighter text-center">
                                 319-1361
                             </div>
                         </div>
                         
-                        <!-- QR碼 與 儲位 (調整手機預覽中的寬度比以跟列印端同步防切：QR 30%, 儲位 70%) -->
-                        <div class="flex items-center" style="height: 24%;">
-                            <div class="w-[30%] flex items-center justify-center pl-1.5">
-                                <div id="prev-qrcode" class="w-[42px] h-[42px] flex items-center justify-center bg-white"></div>
+                        <!-- QR碼、儲位 與 備註表 (32%) -->
+                        <div class="flex items-stretch pt-1 pb-1" style="height: 32%;">
+                            <!-- 左下側 (35%): QR Code + 下移的人員/列印時間 -->
+                            <div class="w-[35%] flex flex-col justify-between items-center h-full">
+                                <div id="prev-qrcode" class="w-[56px] h-[56px] flex items-center justify-center bg-white"></div>
+                                <div class="text-[7px] font-bold text-slate-800 leading-tight text-left scale-[0.8] origin-bottom-left w-[125%] pl-1 mt-0.5">
+                                    人員: <span id="prev-operator-text">上架人員</span><br>
+                                    時間: <span id="prev-time-text">列印時間</span>
+                                </div>
                             </div>
-                            <div id="prev-loc" class="w-[70%] flex items-center justify-center text-[16px] font-black px-1 font-sans text-center whitespace-nowrap overflow-visible">
-                                7A-12-E01
+                            
+                            <!-- 右下側 (65%): 儲位 (往上移) + 手寫備註6格表 -->
+                            <div class="w-[65%] flex flex-col justify-between h-full pl-1">
+                                <!-- 儲位 (向上移動，字級16px) -->
+                                <div id="prev-loc" class="text-[16px] font-black font-sans text-center whitespace-nowrap overflow-visible leading-none">
+                                    7A-12-E01
+                                </div>
+                                <!-- 6格備註表 -->
+                                <table class="w-full border border-black border-collapse mt-0.5" style="height: 44.4px;">
+                                    <tbody>
+                                        <tr class="border-b border-black">
+                                            <td class="border-r border-black" style="height: 14.8px; width: 50%;"></td>
+                                            <td style="width: 50%;"></td>
+                                        </tr>
+                                        <tr class="border-b border-black">
+                                            <td class="border-r border-black" style="height: 14.8px;"></td>
+                                            <td></td>
+                                        </tr>
+                                        <tr>
+                                            <td class="border-r border-black" style="height: 14.8px;"></td>
+                                            <td></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
-                        </div>
-
-                        <!-- 手機端即時預覽：右下角小字資訊 (縮小美化比例) -->
-                        <div class="absolute bottom-1 right-2 text-[7px] font-bold text-slate-600 scale-[0.8] origin-bottom-right leading-tight text-right select-none">
-                            人員: <span id="prev-operator-text">上架人員</span><br>
-                            時間: <span id="prev-time-text">列印時間</span>
                         </div>
                     </div>
                 </div>
